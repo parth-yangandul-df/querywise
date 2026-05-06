@@ -24,23 +24,21 @@ jobs:
             cd ~/sql-chat-app/backend
 
             # 2. Pull latest changes
-            git pull origin dev
+            # Use -f to ignore local changes, but it won't touch your symlink
+            git fetch --all
+            git reset --hard origin/dev
 
-            # 3. Re-create .env file from GitHub Secrets (optional but recommended)
-            echo "${{ secrets.ENV_FILE }}" > .env
+            # 3. Ensure the symlink exists (Just in case)
+            ln -sf ~/backend.env .env
 
             # 4. Activate Virtual Env and Update Dependencies
             source venv/bin/activate
             pip install --upgrade pip
             pip install . --force-reinstall
-            pip install asyncpg PyJWT  # Ensuring critical drivers are present
 
             # 5. Run Database Migrations
             export PYTHONPATH=$PYTHONPATH:$(pwd)
             alembic upgrade head
 
-            # 6. Restart the Application using PM2
+            # 6. Restart the Application
             pm2 restart sql-chat || pm2 start "venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000" --name "sql-chat"
-            
-            # 7. Save PM2 state
-            pm2 save
