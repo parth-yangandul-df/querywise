@@ -1,0 +1,126 @@
+name: Deploy Frontends to S3 and CloudFront
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      #################################################
+      # Setup Node
+      #################################################
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            chatbot-frontend/package-lock.json
+            angular-test/package-lock.json
+
+      #################################################
+      # Build Frontend 1 (frontend)
+      #################################################
+
+      - name: Install Frontend Dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: Build Frontend
+        working-directory: frontend
+        run: npm run build
+
+      #################################################
+      # Build Frontend 2 (chatbot-frontend)
+      #################################################
+
+      - name: Install Chatbot Dependencies
+        working-directory: chatbot-frontend
+        run: npm install
+
+      - name: Build Chatbot Frontend
+        working-directory: chatbot-frontend
+        run: npm run build
+
+      #################################################
+      # Build Frontend 3 (Angular)
+      #################################################
+
+      - name: Install Angular Dependencies
+        working-directory: angular-test
+        run: npm install
+        
+      - name: Build Angular App
+        working-directory: angular-test
+        run: npm run build -- --configuration production --base-href /angular/
+
+      #################################################
+      # Deploy Frontend 1 -> /main
+      #################################################
+
+      - name: Upload Main Frontend to S3
+        uses: jakejarvis/s3-sync-action@v0.5.1
+        with:
+          args: --delete
+        env:
+          AWS_S3_BUCKET: ${{ secrets.S3_BUCKET_NAME }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          SOURCE_DIR: frontend/dist
+          DEST_DIR: main
+
+      #################################################
+      # Deploy Frontend 2 -> /chatbot
+      #################################################
+
+      - name: Upload Chatbot Frontend to S3
+        uses: jakejarvis/s3-sync-action@v0.5.1
+        with:
+          args: --delete
+        env:
+          AWS_S3_BUCKET: ${{ secrets.S3_BUCKET_NAME }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          SOURCE_DIR: chatbot-frontend/dist
+          DEST_DIR: chatbot
+
+      #################################################
+      # Deploy Angular -> /angular
+      #################################################
+
+      - name: Upload Angular Frontend to S3
+        uses: jakejarvis/s3-sync-action@v0.5.1
+        with:
+          args: --delete
+        env:
+          AWS_S3_BUCKET: ${{ secrets.S3_BUCKET_NAME }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          SOURCE_DIR: angular-test/dist/angular-test/browser
+          DEST_DIR: angular
+
+      #################################################
+      # Invalidate CloudFront
+      #################################################
+
+      - name: Invalidate CloudFront Cache
+        run: |
+          aws cloudfront create-invalidation \
+          --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+          --paths "/*"
+
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
