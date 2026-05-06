@@ -1,10 +1,10 @@
 """Tests for FieldRegistry — all PRMS filterable fields with column mappings and aliases."""
 
 import pytest
+
 from app.llm.graph.nodes.field_registry import (
     FIELD_REGISTRY,
     FIELD_REGISTRY_BY_DOMAIN,
-    FieldConfig,
     StartupIntegrityError,
     lookup_field,
     resolve_alias,
@@ -23,9 +23,19 @@ class TestFieldRegistryContents:
     def test_resource_domain_has_required_fields(self):
         """Resource domain has all expected filterable fields."""
         resource_fields = FIELD_REGISTRY_BY_DOMAIN["resource"]
-        expected = {"skill", "resource_name", "designation", "tech_category", "role",
-                    "start_date", "end_date", "billable", "min_allocation",
-                    "skill_name", "min_experience"}
+        expected = {
+            "skill",
+            "resource_name",
+            "designation",
+            "tech_category",
+            "role",
+            "start_date",
+            "end_date",
+            "billable",
+            "min_allocation",
+            "skill_name",
+            "min_experience",
+        }
         assert expected.issubset(set(resource_fields.keys())), (
             f"Missing resource fields: {expected - set(resource_fields.keys())}"
         )
@@ -33,17 +43,30 @@ class TestFieldRegistryContents:
     def test_client_domain_has_required_fields(self):
         """Client domain has all expected filterable fields."""
         client_fields = FIELD_REGISTRY_BY_DOMAIN["client"]
-        expected = {"client_name", "country_id", "start_date", "end_date",
-                    "project_name", "status"}
+        expected = {"client_name", "country_id", "start_date", "end_date", "project_name", "status"}
         assert expected.issubset(set(client_fields.keys()))
 
     def test_project_domain_has_required_fields(self):
         """Project domain has all expected filterable fields."""
         project_fields = FIELD_REGISTRY_BY_DOMAIN["project"]
-        expected = {"client_name", "project_name", "status", "project_manager",
-                    "start_date", "end_date", "min_budget", "min_utilization",
-                    "billable", "role", "tech_category", "min_allocation",
-                    "resource_name", "client_id", "min_duration", "days_overdue"}
+        expected = {
+            "client_name",
+            "project_name",
+            "status",
+            "project_manager",
+            "start_date",
+            "end_date",
+            "min_budget",
+            "min_utilization",
+            "billable",
+            "role",
+            "tech_category",
+            "min_allocation",
+            "resource_name",
+            "client_id",
+            "min_duration",
+            "days_overdue",
+        }
         assert expected.issubset(set(project_fields.keys())), (
             f"Missing project fields: {expected - set(project_fields.keys())}"
         )
@@ -57,8 +80,16 @@ class TestFieldRegistryContents:
     def test_user_self_domain_has_required_fields(self):
         """User_self domain has all expected filterable fields."""
         user_self_fields = FIELD_REGISTRY_BY_DOMAIN["user_self"]
-        expected = {"start_date", "end_date", "min_allocation", "project_name",
-                    "category", "min_hours", "skill_name", "min_experience"}
+        expected = {
+            "start_date",
+            "end_date",
+            "min_allocation",
+            "project_name",
+            "category",
+            "min_hours",
+            "skill_name",
+            "min_experience",
+        }
         assert expected.issubset(set(user_self_fields.keys()))
 
 

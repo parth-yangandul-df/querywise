@@ -1,4 +1,4 @@
-import { Component, OnInit, CUSTOM_ELEMENTS_SCHEMA, signal } from '@angular/core';
+import { Component, OnInit, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -12,7 +12,6 @@ interface Connection {
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  schemas: [CUSTOM_ELEMENTS_SCHEMA],
   imports: [CommonModule, FormsModule],
   template: `
     <div class="page">
@@ -34,7 +33,6 @@ interface Connection {
 
         <!-- Main content -->
       <main class="content">
-        <!-- Connection picker -->
         @if (loadingConnections()) {
           <div class="state-msg">Loading connections…</div>
         } @else if (connections().length === 0) {
@@ -44,18 +42,27 @@ interface Connection {
             first.
           </div>
         } @else {
-          @if (connections().length > 1) {
-            <div class="conn-picker">
-              <label for="conn-select">Connection</label>
-              <select id="conn-select" [(ngModel)]="connectionId">
-                @for (c of connections(); track c.id) {
-                  <option [value]="c.id">{{ c.name }} ({{ c.connector_type }})</option>
-                }
-              </select>
-            </div>
-          }
-          <!-- Chat widget -->
-          <querywise-chat [attr.connection-id]="connectionId"></querywise-chat>
+          <div class="conn-info">
+            @if (connections().length > 1) {
+              <div class="conn-picker">
+                <label for="conn-select">Connection</label>
+                <select id="conn-select" [(ngModel)]="connectionId">
+                  @for (c of connections(); track c.id) {
+                    <option [value]="c.id">{{ c.name }} ({{ c.connector_type }})</option>
+                  }
+                </select>
+              </div>
+            }
+            <p class="conn-name" *ngIf="connections().length === 1">
+              Connected to <strong>{{ connections()[0]?.name }}</strong> ({{ connections()[0]?.connector_type }})
+            </p>
+            <button class="btn-open-chat" (click)="openQueryWiseChat()">
+              Open QueryWise Chat
+            </button>
+            <a class="admin-link" href="http://localhost:5173/connections" target="_blank">
+              Manage connections in admin UI →
+            </a>
+          </div>
         }
       </main>
     </div>
@@ -141,27 +148,43 @@ interface Connection {
     /* Content */
     .content { padding: 32px 24px; max-width: 900px; margin: 0 auto; width: 100%; box-sizing: border-box; }
 
-    .welcome { margin-bottom: 20px; }
-    h1 { margin: 0 0 4px; font-size: 1.5rem; font-weight: 700; color: #1e293b; }
-    .subtitle { margin: 0; color: #64748b; font-size: .9rem; }
-
-    /* Role card */
-    .role-card {
-      display: flex;
-      align-items: center;
-      gap: 16px;
+    .state-msg {
       padding: 16px 20px;
-      border-radius: 12px;
-      margin-bottom: 24px;
-      border: 1.5px solid transparent;
+      border-radius: 10px;
+      font-size: .875rem;
+      color: #64748b;
+      background: #f1f5f9;
+      margin-bottom: 20px;
     }
-    .role-card-admin   { background: #eef2ff; border-color: #c7d2fe; }
-    .role-card-manager { background: #fefce8; border-color: #fde68a; }
-    .role-card-user    { background: #f0fdf4; border-color: #bbf7d0; }
+    .state-msg.warn {
+      background: #fefce8;
+      color: #92400e;
+      border: 1px solid #fde68a;
+    }
+    .state-msg a { color: #6366f1; }
 
-    .role-icon { font-size: 1.6rem; }
-    .role-title { font-weight: 700; font-size: .95rem; color: #1e293b; margin-bottom: 2px; }
-    .role-desc  { font-size: .82rem; color: #64748b; }
+    /* Connection info */
+    .conn-info {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+      padding: 48px 24px;
+      text-align: center;
+    }
+    .conn-name {
+      font-size: .9rem;
+      color: #64748b;
+    }
+    .conn-name strong {
+      color: #1e293b;
+    }
+    .admin-link {
+      font-size: .8rem;
+      color: #6366f1;
+      text-decoration: none;
+    }
+    .admin-link:hover { text-decoration: underline; }
 
     /* Connection picker */
     .conn-picker {
@@ -182,22 +205,6 @@ interface Connection {
       outline: none;
     }
     .conn-picker select:focus { border-color: #6366f1; }
-
-    /* State messages */
-    .state-msg {
-      padding: 16px 20px;
-      border-radius: 10px;
-      font-size: .875rem;
-      color: #64748b;
-      background: #f1f5f9;
-      margin-bottom: 20px;
-    }
-    .state-msg.warn {
-      background: #fefce8;
-      color: #92400e;
-      border: 1px solid #fde68a;
-    }
-    .state-msg a { color: #6366f1; }
   `],
 })
 export class DashboardComponent implements OnInit {
@@ -236,6 +243,7 @@ export class DashboardComponent implements OnInit {
     try {
       const res = await fetch(`${apiUrl}/api/v1/connections`, {
         headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       });
       if (res.ok) {
         const data: Connection[] = await res.json();
@@ -250,6 +258,13 @@ export class DashboardComponent implements OnInit {
   }
 
   logout() {
+    // Clear all chat session keys
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key && key.startsWith('qw_chat_session_id:')) {
+        sessionStorage.removeItem(key);
+      }
+    }
     sessionStorage.removeItem('qw_auth_token');
     sessionStorage.removeItem('qw_api_url');
     sessionStorage.removeItem('qw_user_role');
@@ -258,8 +273,6 @@ export class DashboardComponent implements OnInit {
   }
 
   openQueryWiseChat() {
-    const token = sessionStorage.getItem('qw_auth_token') ?? '';
-    const url = `http://localhost:5174?token=${encodeURIComponent(token)}&connection_id=${encodeURIComponent(this.connectionId)}`;
-    window.open(url, '_blank');
+    this.router.navigate(['/chat'], { queryParams: { connection_id: this.connectionId } });
   }
 }

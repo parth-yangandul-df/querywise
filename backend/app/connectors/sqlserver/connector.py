@@ -1,10 +1,18 @@
 """SQL Server connector for QueryWise — Azure SQL via ODBC Driver 18.
 
 Connection string format (enter in the UI):
-    DRIVER={ODBC Driver 18 for SQL Server};SERVER=tcp:{server}.database.windows.net,1433;
-    DATABASE={db};UID={user};PWD={password};Encrypt=yes;TrustServerCertificate=yes;
+    DRIVER={ODBC Driver 18 for SQL Server};Server={server}.database.windows.net;
+    Database={db};UID={user};PWD={password};Encrypt=yes;TrustServerCertificate=no;
+
+    For Azure SQL (recommended):
+        TrustServerCertificate=no  — validates the Azure CA-signed cert (correct for Azure SQL)
+        TrustServerCertificate=yes — skips cert validation (use only for on-prem/self-signed certs)
 
 Falls back to ODBC Driver 17 automatically if Driver 18 is not installed.
+
+**Security note:** SQL Server connections should use a read-only database role.
+All queries are executed within a transaction that is always rolled back, ensuring
+no DML statements can persist even if they bypass the SQL blocklist.
 """
 
 import asyncio
@@ -80,14 +88,10 @@ class SQLServerConnector(BaseConnector):
                 dsn=resolved, minsize=1, maxsize=5, autocommit=True
             )
             self._connection_string = resolved
-        except Exception as e:
+        except Exception:
             raise ConnectionError(
-                f"SQL Server connection failed: {e}\n\n"
-                "Expected connection string format:\n"
-                "  SERVER=tcp:<server>.database.windows.net,1433;"
-                "DATABASE=<db>;UID=<user>;PWD=<password>;"
-                "Encrypt=yes;TrustServerCertificate=yes;"
-            ) from e
+                "Unable to connect to the database. Please verify your connection string and try again."
+            )
 
     async def disconnect(self) -> None:
         if self._pool:
@@ -125,7 +129,7 @@ class SQLServerConnector(BaseConnector):
     async def introspect_schemas(self) -> list[str]:
         """Return user-accessible schemas, excluding system ones."""
         if self._pool is None:
-            raise ConnectionError("Connector not connected — call connect() first")
+            raise ConnectionError("Database connection lost. Please try again.")
         sql = """
             SELECT SCHEMA_NAME
             FROM INFORMATION_SCHEMA.SCHEMATA
@@ -149,7 +153,7 @@ class SQLServerConnector(BaseConnector):
     async def introspect_tables(self, schema: str = "dbo") -> list[TableInfo]:
         """Introspect all tables and views in a schema with columns."""
         if self._pool is None:
-            raise ConnectionError("Connector not connected — call connect() first")
+            raise ConnectionError("Database connection lost. Please try again.")
         async with self._pool.acquire() as conn:
             cursor = await conn.cursor()
             try:
@@ -282,7 +286,7 @@ class SQLServerConnector(BaseConnector):
                     foreign_keys=foreign_keys_by_table.get(table_name, []),
                     row_count_estimate=None,
                 )
-                )
+            )
 
         return tables
 
@@ -300,10 +304,10 @@ class SQLServerConnector(BaseConnector):
         # Safety check (shared blocklist)
         issues = check_sql_safety(sql)
         if issues:
-            raise SQLSafetyError("; ".join(issues))
+            raise SQLSafetyError()
 
         if self._pool is None:
-            raise ConnectionError("Connector not connected — call connect() first")
+            raise ConnectionError("Database connection lost. Please try again.")
 
         # T-SQL uses TOP instead of LIMIT
         wrapped_sql = _inject_top(sql, max_rows + 1)
@@ -311,11 +315,11 @@ class SQLServerConnector(BaseConnector):
         start = time.monotonic()
         try:
             result = await asyncio.wait_for(
-                self._run_query(wrapped_sql, params),
+                self._run_query_readonly(wrapped_sql, params),
                 timeout=timeout_seconds,
             )
-        except TimeoutError as e:
-            raise QueryTimeoutError(timeout_seconds) from e
+        except TimeoutError:
+            raise QueryTimeoutError(timeout_seconds)
 
         elapsed_ms = (time.monotonic() - start) * 1000
 
@@ -332,11 +336,46 @@ class SQLServerConnector(BaseConnector):
             truncated=truncated,
         )
 
+    async def _run_query_readonly(
+        self, sql: str, params: tuple[Any, ...] | None = None
+    ) -> tuple[list[Any], list[str], list[str]]:
+        """Execute a query inside a transaction that always rolls back.
+
+        This ensures no writes can ever persist, even if the SQL contains
+        DML statements that bypass the blocklist.
+        """
+        if self._pool is None:
+            raise ConnectionError("Database connection lost. Please try again.")
+        async with self._pool.acquire() as conn:
+            # Begin a transaction, execute, then always rollback
+            await conn.execute("BEGIN TRANSACTION")
+            try:
+                cursor = await conn.cursor()
+                try:
+                    if params:
+                        await cursor.execute(sql, params)
+                    else:
+                        await cursor.execute(sql)
+                    rows = await cursor.fetchall()
+                    if not rows:
+                        return [], [], []
+                    col_names = [desc[0] for desc in cursor.description]
+                    col_types = [_mssql_type_name(desc[1]) for desc in cursor.description]
+                    return rows, col_names, col_types
+                finally:
+                    await cursor.close()
+            finally:
+                # Always rollback — never commit, ensuring read-only safety
+                try:
+                    await conn.execute("ROLLBACK TRANSACTION")
+                except Exception:
+                    pass
+
     async def _run_query(
         self, sql: str, params: tuple[Any, ...] | None = None
     ) -> tuple[list[Any], list[str], list[str]]:
         if self._pool is None:
-            raise ConnectionError("Connector not connected — call connect() first")
+            raise ConnectionError("Database connection lost. Please try again.")
         async with self._pool.acquire() as conn:
             cursor = await conn.cursor()
             try:
@@ -361,7 +400,7 @@ class SQLServerConnector(BaseConnector):
         self, schema: str, table: str, column: str, limit: int = 20
     ) -> list[Any]:
         if self._pool is None:
-            raise ConnectionError("Connector not connected — call connect() first")
+            raise ConnectionError("Database connection lost. Please try again.")
         sql = (
             f"SELECT DISTINCT TOP {limit} [{column}] "
             f"FROM [{schema}].[{table}] "
@@ -381,6 +420,7 @@ class SQLServerConnector(BaseConnector):
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
 
 def _inject_top(sql: str, n: int) -> str:
     """Wrap a SELECT statement with TOP N if no TOP/LIMIT is present.

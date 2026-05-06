@@ -1,3 +1,7 @@
+# DEPRECATED: superseded by filter_extractor.py (Phase 7, Plan 02).
+# Kept at original path for backward compatibility with existing tests and the
+# flag=OFF refinement path. Archived copy also at _deprecated/param_extractor.py.
+# Delete after USE_QUERY_PLAN_COMPILER=true is confirmed in production.
 """extract_params node — regex/keyword parameter extraction. No LLM calls."""
 
 from __future__ import annotations
@@ -110,15 +114,48 @@ async def extract_params(state: GraphState) -> dict[str, Any]:
     # "which of these know Python" would otherwise leave skill unset and
     # cause ResourceAgent._run_refinement() to fall back to the full query.
     if params.get("_refine_mode") and not params.get("skill"):
-        _refine_stop: frozenset[str] = frozenset({
-            "which", "one", "of", "these", "those", "them", "who",
-            "the", "a", "an", "know", "knows", "can", "are", "is",
-            "and", "or", "have", "do", "does", "show", "me", "list",
-            "among", "filter", "only", "same", "ones", "from",
-            "skill", "skills", "with", "by", "in", "for",
-        })
+        _refine_stop: frozenset[str] = frozenset(
+            {
+                "which",
+                "one",
+                "of",
+                "these",
+                "those",
+                "them",
+                "who",
+                "the",
+                "a",
+                "an",
+                "know",
+                "knows",
+                "can",
+                "are",
+                "is",
+                "and",
+                "or",
+                "have",
+                "do",
+                "does",
+                "show",
+                "me",
+                "list",
+                "among",
+                "filter",
+                "only",
+                "same",
+                "ones",
+                "from",
+                "skill",
+                "skills",
+                "with",
+                "by",
+                "in",
+                "for",
+            }
+        )
         candidates = [
-            w for w in re.findall(r"[A-Za-z][A-Za-z0-9#+.\-]*", question)
+            w
+            for w in re.findall(r"[A-Za-z][A-Za-z0-9#+.\-]*", question)
             if w.lower() not in _refine_stop and len(w) >= 2
         ]
         if candidates:

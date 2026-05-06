@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
+    admin,
     auth,
     connections,
     dictionary,
@@ -31,3 +32,4 @@ api_router.include_router(query_history.router)
 api_router.include_router(knowledge.router)
 api_router.include_router(sessions.router)
 api_router.include_router(users.router)
+api_router.include_router(admin.router)

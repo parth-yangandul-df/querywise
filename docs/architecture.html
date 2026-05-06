@@ -348,7 +348,7 @@ pre code { background: none; color: inherit; padding: 0; }
         <li><strong>Anthropic:</strong> Claude models (default: claude-sonnet-4-20250514)</li>
         <li><strong>OpenAI:</strong> GPT completions + text-embedding-3-small</li>
         <li><strong>Ollama:</strong> Local inference (llama3.1:8b + nomic-embed-text)</li>
-        <li><strong>OpenRouter:</strong> Multi-model gateway (default: gpt-3.5-turbo)</li>
+        <li><strong>OpenRouter:</strong> Multi-model gateway (default: deepseek/deepseek-v3.2)</li>
         <li><strong>Groq:</strong> Fast inference (default: moonshotai/kimi-k2-instruct)</li>
         <li><strong>Embeddings:</strong> OpenAI or Ollama (auto-derived from provider)</li>
         <li><strong>Temperature:</strong> Always 0.0 (deterministic)</li>
@@ -1131,7 +1131,7 @@ docker compose up
       <tr><td><code>ANTHROPIC_API_KEY</code></td><td>&mdash;</td><td>Required for Anthropic</td></tr>
       <tr><td><code>OPENAI_API_KEY</code></td><td>&mdash;</td><td>Required for OpenAI (completions + embeddings)</td></tr>
       <tr><td><code>OPENROUTER_API_KEY</code></td><td>&mdash;</td><td>Required for OpenRouter</td></tr>
-      <tr><td><code>OPENROUTER_MODEL</code></td><td><code>openai/gpt-3.5-turbo</code></td><td>OpenRouter model</td></tr>
+      <tr><td><code>OPENROUTER_MODEL</code></td><td><code>deepseek/deepseek-v3.2</code></td><td>OpenRouter model for Composer (SQL generation)</td></tr>
       <tr><td><code>GROQ_API_KEY</code></td><td>&mdash;</td><td>Required for Groq</td></tr>
       <tr><td><code>GROQ_MODEL</code></td><td><code>moonshotai/kimi-k2-instruct</code></td><td>Groq model</td></tr>
       <tr><td><code>OLLAMA_BASE_URL</code></td><td><code>http://localhost:11434</code></td><td>Ollama server URL</td></tr>

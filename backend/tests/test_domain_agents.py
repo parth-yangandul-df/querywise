@@ -1,14 +1,19 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from app.connectors.base_connector import QueryResult
 
 
 def _mock_connector(rows=None):
     c = MagicMock()
     result = QueryResult(
-        columns=["Name"], column_types=["nvarchar"],
-        rows=rows or [["Alice"]], row_count=len(rows or [["Alice"]]),
-        execution_time_ms=5.0, truncated=False,
+        columns=["Name"],
+        column_types=["nvarchar"],
+        rows=rows or [["Alice"]],
+        row_count=len(rows or [["Alice"]]),
+        execution_time_ms=5.0,
+        truncated=False,
     )
     c.execute_query = AsyncMock(return_value=result)
     return c
@@ -27,11 +32,19 @@ def _state(**overrides):
         "intent": "active_resources",
         "confidence": 0.95,
         "params": {},
-        "sql": None, "result": None, "generated_sql": None,
-        "retry_count": 0, "explanation": None,
-        "llm_provider": None, "llm_model": None,
-        "answer": None, "highlights": [], "suggested_followups": [],
-        "execution_id": None, "execution_time_ms": None, "error": None,
+        "sql": None,
+        "result": None,
+        "generated_sql": None,
+        "retry_count": 0,
+        "explanation": None,
+        "llm_provider": None,
+        "llm_model": None,
+        "answer": None,
+        "highlights": [],
+        "suggested_followups": [],
+        "execution_id": None,
+        "execution_time_ms": None,
+        "error": None,
     }
     base.update(overrides)
     return base
@@ -40,6 +53,7 @@ def _state(**overrides):
 @pytest.mark.asyncio
 async def test_resource_active(monkeypatch):
     from app.llm.graph.domains.resource import ResourceAgent
+
     mock_conn = _mock_connector()
     monkeypatch.setattr(
         "app.llm.graph.domains.base_domain.get_or_create_connector",
@@ -57,6 +71,7 @@ async def test_resource_active(monkeypatch):
 @pytest.mark.asyncio
 async def test_resource_by_skill_passes_param(monkeypatch):
     from app.llm.graph.domains.resource import ResourceAgent
+
     mock_conn = _mock_connector()
     monkeypatch.setattr(
         "app.llm.graph.domains.base_domain.get_or_create_connector",
@@ -72,6 +87,7 @@ async def test_resource_by_skill_passes_param(monkeypatch):
 @pytest.mark.asyncio
 async def test_resource_unknown_intent_raises(monkeypatch):
     from app.llm.graph.domains.resource import ResourceAgent
+
     mock_conn = _mock_connector()
     monkeypatch.setattr(
         "app.llm.graph.domains.base_domain.get_or_create_connector",
@@ -86,6 +102,7 @@ async def test_resource_unknown_intent_raises(monkeypatch):
 @pytest.mark.asyncio
 async def test_client_active(monkeypatch):
     from app.llm.graph.domains.client import ClientAgent
+
     mock_conn = _mock_connector()
     monkeypatch.setattr(
         "app.llm.graph.domains.base_domain.get_or_create_connector",
@@ -101,6 +118,7 @@ async def test_client_active(monkeypatch):
 @pytest.mark.asyncio
 async def test_project_active(monkeypatch):
     from app.llm.graph.domains.project import ProjectAgent
+
     mock_conn = _mock_connector()
     monkeypatch.setattr(
         "app.llm.graph.domains.base_domain.get_or_create_connector",
@@ -117,6 +135,7 @@ async def test_project_active(monkeypatch):
 async def test_timesheet_valid_filter(monkeypatch):
     """Approved timesheet query must include IsApproved=1 AND IsDeleted=0 AND IsRejected=0."""
     from app.llm.graph.domains.timesheet import TimesheetAgent
+
     mock_conn = _mock_connector()
     monkeypatch.setattr(
         "app.llm.graph.domains.base_domain.get_or_create_connector",
@@ -134,6 +153,7 @@ async def test_timesheet_valid_filter(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_domain_tool_dispatches(monkeypatch):
     from app.llm.graph.domains.registry import run_domain_tool
+
     mock_conn = _mock_connector()
     monkeypatch.setattr(
         "app.llm.graph.domains.base_domain.get_or_create_connector",
@@ -147,6 +167,7 @@ async def test_run_domain_tool_dispatches(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_domain_tool_unknown_domain(monkeypatch):
     from app.llm.graph.domains.registry import run_domain_tool
+
     state = _state(domain="nonexistent")
     with pytest.raises(ValueError, match="unknown domain"):
         await run_domain_tool(state)

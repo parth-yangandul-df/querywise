@@ -1,19 +1,27 @@
 import axios from 'axios';
 
-import { clearToken, getToken } from '../utils/auth';
+import { clearUserInfo } from '../utils/auth';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+/** Read a cookie value by name from document.cookie (non-HttpOnly cookies only). */
+function getCookie(name: string): string | null {
+  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
 
 export const api = axios.create({
   baseURL: `${API_BASE}/api/v1`,
   headers: { 'Content-Type': 'application/json' },
+  // Send HttpOnly cookies automatically on every request
+  withCredentials: true,
 });
 
-// Attach JWT on every request if present
+// Attach CSRF token header on every mutating request
 api.interceptors.request.use((config) => {
-  const token = getToken();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  const csrfToken = getCookie('csrf_token');
+  if (csrfToken) {
+    config.headers['X-CSRF-Token'] = csrfToken;
   }
   return config;
 });
@@ -24,7 +32,7 @@ api.interceptors.response.use(
   (error) => {
     // Only redirect on 401 for non-auth endpoints — let LoginPage handle its own 401s
     if (error.response?.status === 401 && !error.config?.url?.includes('/auth/login')) {
-      clearToken();
+      clearUserInfo();
       window.location.href = '/login';
       return Promise.reject(error);
     }
@@ -37,4 +45,3 @@ api.interceptors.response.use(
     return Promise.reject(error);
   },
 );
-

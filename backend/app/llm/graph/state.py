@@ -2,69 +2,77 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
-from typing_extensions import TypedDict, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing_extensions import TypedDict
 
 from app.connectors.base_connector import QueryResult
 
 
 class GraphState(TypedDict):
-    # ── Inputs ──────────────────────────────────────────────────────────────
+    # ── Inputs ───────────────────────────────────────────────────────────
     question: str
-    connection_id: str           # UUID as str
+    connection_id: str  # UUID as str
     connector_type: str
     connection_string: str
     timeout_seconds: int
     max_rows: int
-    db: AsyncSession             # SQLAlchemy async session (not serialized)
-    session_id: str | None       # UUID as str — chat thread identifier
-    conversation_history: list[dict]  # [{role: "user"|"assistant", content: str}, ...]
-    last_turn_context: dict | None  # Structured context from prior turn (TurnContext as dict)
+    db: AsyncSession  # SQLAlchemy async session (not serialized)
+    session_id: str | None  # UUID as str — chat thread identifier
 
-    # ── Hybrid Mode (Phase 8) ─────────────────────────────────────────────
-    last_query: str | None                  # Previous user question for similarity comparison
-    last_query_embedding: list[float] | None  # Embedding of previous question
-    current_query_embedding: list[float] | None  # Embedding of current question
-    semantic_similarity: float | None       # Cosine similarity between current and last query
-    follow_up_type: Literal["refine", "replace", "new"] | None  # Classification result
-    confidence_breakdown: dict | None       # {valid_json, valid_fields, matches_schema} scores
-    last_intent: str | None                 # Intent from previous turn for override logic
+    # ── Auth / RBAC ──────────────────────────────────────────────────────
+    user_id: str | None
+    user_role: str | None
+    resource_id: int | None
+    employee_id: str | None
 
-    # ── Auth / RBAC (set by query_service from current_user) ─────────────
-    user_id: str | None          # UUID as str — authenticated user's ID; None if unauthenticated
-    user_role: str | None        # "admin" | "manager" | "user"; None if unauthenticated
-    resource_id: int | None      # Only set for "user" role; None for admin/manager/unauthenticated
-    employee_id: str | None      # Employee ID for employee_id-scoped queries; None if not set
+    # ── History (loaded by load_history node) ────────────────────────────
+    loaded_history: list[dict]  # [{role, content}, ...] compacted last 6 turns
+    last_generated_sql: str | None  # SQL from the most recent successful query turn
+    last_result_columns: list[str] | None
+    last_result_preview_rows: list[list] | None  # max 20 rows from last successful query
 
-    # ── Classification (set by classify_intent) ──────────────────────────
-    domain: str | None           # "resource" | "client" | "project" | "timesheet"
-    intent: str | None           # e.g. "active_resources"
-    confidence: float
-    params: dict[str, Any]       # extracted parameters (skill, dates, names)
+    # ── Turn resolution (set by resolve_turn node) ───────────────────────
+    action: str | None  # "query" | "clarification" | "show_sql" | "explain_result"
+    resolved_question: str | None  # standalone rewritten question for build_context
+    clarification_reason: str | None
+    clarification_message: str | None
+    clarification_options: list[str]
 
-    # ── Execution (set by run_domain_tool or llm_fallback) ───────────────
-    sql: str | None              # final executed SQL
-    result: QueryResult | None
-    generated_sql: str | None    # LLM path only; None for domain tool path
+    # ── Context building (set by build_context_node) ─────────────────────
+    prompt_context: str | None  # scope-injected prompt string for the composer
+    schema_tables: dict | None  # {TABLE_NAME: [COL, ...]} for the SQL validator
+    question_embedding: list[float] | None  # question vector, used by similarity_check
+
+    # ── Similarity shortcut (set by similarity_check node) ────────────────
+    similarity_shortcut: bool  # True if a validated sample query matched
+
+    # ── SQL generation pipeline (compose → validate → handle_error cycle) ─
+    generated_sql: str | None
+    validation_issues: list[str]  # empty = valid; non-empty = re-route to handle_error
+    previous_attempts: list[str]  # all SQL strings tried in this turn
     retry_count: int
-    explanation: str | None      # LLM path only; None for domain tool path
-    llm_provider: str | None     # "domain_tool" for domain path
-    llm_model: str | None        # intent_name for domain path
+
+    # ── Execution (set by execute_sql node) ───────────────────────────────
+    sql: str | None
+    result: QueryResult | None
+    explanation: str | None
+    llm_provider: str | None
+    llm_model: str | None
 
     # ── Interpretation (set by interpret_result) ─────────────────────────
     answer: str | None
     highlights: list[str]
     suggested_followups: list[str]
 
-    # ── History (set by write_history) ───────────────────────────────────
-    execution_id: Any            # UUID of saved QueryExecution record
+    # ── History write (set by write_history) ─────────────────────────────
+    execution_id: Any
     execution_time_ms: float | None
 
     # ── Error propagation ────────────────────────────────────────────────
     error: str | None
 
-    # ── QueryPlan Compiler (set by update_query_plan node) ─────────────
-    filters: list  # FilterClause objects extracted by filter_extractor node
-    query_plan: dict | None  # QueryPlan serialized as dict (follows Phase 6 pattern)
+    # ── Streaming (optional — None on non-streaming path) ────────────────
+    event_queue: asyncio.Queue | None  # push {"type": "stage"|"token", ...} events here

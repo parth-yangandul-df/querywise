@@ -1,4 +1,5 @@
 """Tests for context-aware classify_intent: _is_refinement_followup() and fast path."""
+
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -108,9 +109,10 @@ def test_is_refinement_followup_column_overlap():
 
     # content words: ["resourcename", "employeeid", "benched", "staff"] = 4 total
     # overlap: "resourcename" + "employeeid" both in _LAST_TURN["columns"] → 2/4 = 50% ≥ 30%
-    assert _is_refinement_followup(
-        "show resourcename and employeeid for benched staff", _LAST_TURN
-    ) is True
+    assert (
+        _is_refinement_followup("show resourcename and employeeid for benched staff", _LAST_TURN)
+        is True
+    )
 
 
 def test_is_refinement_followup_returns_false_no_context():
@@ -133,9 +135,12 @@ def test_is_refinement_followup_returns_false_long_no_overlap():
     from app.llm.graph.nodes.intent_classifier import _is_refinement_followup
 
     # Many content words, none matching prior columns/params
-    assert _is_refinement_followup(
-        "Show all active frontend engineers working on mobile applications", _LAST_TURN
-    ) is False
+    assert (
+        _is_refinement_followup(
+            "Show all active frontend engineers working on mobile applications", _LAST_TURN
+        )
+        is False
+    )
 
 
 def test_is_refinement_followup_returns_false_no_sql_key():
@@ -161,10 +166,9 @@ async def test_classify_intent_followup_inherits_prior():
         last_turn_context=_LAST_TURN,
     )
 
-    with patch(
-        "app.llm.graph.nodes.intent_classifier.embed_text", AsyncMock()
-    ) as mock_embed, patch(
-        "app.llm.graph.nodes.intent_classifier.ensure_catalog_embedded", AsyncMock()
+    with (
+        patch("app.llm.graph.nodes.intent_classifier.embed_text", AsyncMock()) as mock_embed,
+        patch("app.llm.graph.nodes.intent_classifier.ensure_catalog_embedded", AsyncMock()),
     ):
         result = await classify_intent(state)
 
@@ -187,10 +191,9 @@ async def test_classify_intent_followup_rbac_gate():
         user_role="user",
     )
 
-    with patch(
-        "app.llm.graph.nodes.intent_classifier.embed_text", AsyncMock()
-    ) as mock_embed, patch(
-        "app.llm.graph.nodes.intent_classifier.ensure_catalog_embedded", AsyncMock()
+    with (
+        patch("app.llm.graph.nodes.intent_classifier.embed_text", AsyncMock()) as mock_embed,
+        patch("app.llm.graph.nodes.intent_classifier.ensure_catalog_embedded", AsyncMock()),
     ):
         result = await classify_intent(state)
 
@@ -213,10 +216,9 @@ async def test_classify_intent_followup_user_self_domain_passes_rbac():
         user_role="user",
     )
 
-    with patch(
-        "app.llm.graph.nodes.intent_classifier.embed_text", AsyncMock()
-    ) as mock_embed, patch(
-        "app.llm.graph.nodes.intent_classifier.ensure_catalog_embedded", AsyncMock()
+    with (
+        patch("app.llm.graph.nodes.intent_classifier.embed_text", AsyncMock()) as mock_embed,
+        patch("app.llm.graph.nodes.intent_classifier.ensure_catalog_embedded", AsyncMock()),
     ):
         result = await classify_intent(state)
 
@@ -228,8 +230,9 @@ async def test_classify_intent_followup_user_self_domain_passes_rbac():
 @pytest.mark.asyncio
 async def test_classify_intent_normal_path_unchanged():
     """Fresh long question with no prior overlap goes through embedding (no fast path)."""
-    from app.llm.graph.intent_catalog import INTENT_CATALOG
     from app.llm.graph.nodes.intent_classifier import classify_intent
+
+    from app.llm.graph.intent_catalog import INTENT_CATALOG
 
     # Patch catalog so first entry gets matching embedding
     first_entry = INTENT_CATALOG[0]
@@ -241,14 +244,16 @@ async def test_classify_intent_normal_path_unchanged():
         last_turn_context=_LAST_TURN,  # context present but irrelevant for fresh questions
     )
 
-    with patch(
-        "app.llm.graph.nodes.intent_classifier.embed_text",
-        AsyncMock(return_value=identical_embedding),
-    ) as mock_embed, patch(
-        "app.llm.graph.nodes.intent_classifier.ensure_catalog_embedded", AsyncMock()
-    ), patch(
-        "app.llm.graph.nodes.intent_classifier.get_catalog_embeddings",
-        return_value=[[1.0, 0.0, 0.0]] + [[0.0, 1.0, 0.0]] * (len(INTENT_CATALOG) - 1),
+    with (
+        patch(
+            "app.llm.graph.nodes.intent_classifier.embed_text",
+            AsyncMock(return_value=identical_embedding),
+        ) as mock_embed,
+        patch("app.llm.graph.nodes.intent_classifier.ensure_catalog_embedded", AsyncMock()),
+        patch(
+            "app.llm.graph.nodes.intent_classifier.get_catalog_embeddings",
+            return_value=[[1.0, 0.0, 0.0]] + [[0.0, 1.0, 0.0]] * (len(INTENT_CATALOG) - 1),
+        ),
     ):
         result = await classify_intent(state)
 

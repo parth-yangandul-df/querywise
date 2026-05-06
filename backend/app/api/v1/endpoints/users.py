@@ -12,6 +12,10 @@ from app.api.v1.schemas.user import UserCreate, UserResponse, UserUpdate
 from app.db.models.user import User
 from app.db.session import get_db
 
+ALLOWED_UPDATE_FIELDS: frozenset[str] = frozenset(
+    {"email", "role", "resource_id", "employee_id", "is_active"}
+)
+
 router = APIRouter(prefix="/users", tags=["users"])
 
 
@@ -72,28 +76,20 @@ async def update_user(
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
 
-    if body.email is not None:
-        # Check email not taken
-        result = await db.execute(
-            select(User).where(User.email == body.email, User.id != user_id)
-        )
-        if result.scalar_one_or_none():
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Email already registered")
-        user.email = body.email
-
-    if body.password is not None:
-        password_bytes = body.password.encode("utf-8")
+    update_data = body.model_dump(exclude_unset=True)
+    if "password" in update_data:
+        password_bytes = update_data.pop("password").encode("utf-8")
         hashed = bcrypt.hashpw(password_bytes, bcrypt.gensalt(rounds=12))
         user.hashed_password = hashed.decode("utf-8")
 
-    if body.role is not None:
-        user.role = body.role
-    if body.resource_id is not None:
-        user.resource_id = body.resource_id
-    if body.employee_id is not None:
-        user.employee_id = body.employee_id
-    if body.is_active is not None:
-        user.is_active = body.is_active
+    for field, value in update_data.items():
+        if field not in ALLOWED_UPDATE_FIELDS:
+            continue
+        if field == "email":
+            result = await db.execute(select(User).where(User.email == value, User.id != user_id))
+            if result.scalar_one_or_none():
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Email already registered")
+        setattr(user, field, value)
 
     await db.commit()
     await db.refresh(user)

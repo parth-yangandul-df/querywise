@@ -34,11 +34,40 @@ class _HTMLTextParser(HTMLParser):
     """Converts HTML to clean plain text, respecting block boundaries."""
 
     _BLOCK_TAGS = {
-        "address", "article", "aside", "blockquote", "div", "dl",
-        "fieldset", "figcaption", "figure", "footer", "form",
-        "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr",
-        "li", "main", "nav", "ol", "p", "pre", "section",
-        "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul",
+        "address",
+        "article",
+        "aside",
+        "blockquote",
+        "div",
+        "dl",
+        "fieldset",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "hr",
+        "li",
+        "main",
+        "nav",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "tbody",
+        "td",
+        "tfoot",
+        "th",
+        "thead",
+        "tr",
+        "ul",
     }
     _SKIP_TAGS = {"script", "style", "noscript", "svg"}
 
@@ -88,9 +117,7 @@ def _extract_main_content(html: str) -> str:
     """Try to extract the main content area, stripping chrome/nav."""
     # Prefer <main> or <article> if present
     for tag in ("main", "article"):
-        match = re.search(
-            rf"(?is)<{tag}[^>]*>(.*)</{tag}>", html
-        )
+        match = re.search(rf"(?is)<{tag}[^>]*>(.*)</{tag}>", html)
         if match:
             return match.group(1)
     # Fallback: common content divs (Wikipedia, Confluence, etc.)
@@ -110,13 +137,9 @@ def _clean_html(html: str) -> str:
     # Strip comments
     cleaned = re.sub(r"(?is)<!--.*?-->", "", html)
     # Strip script/style/noscript/svg blocks
-    cleaned = re.sub(
-        r"(?is)<(script|style|noscript|svg)[^>]*>.*?</\1>", "", cleaned
-    )
+    cleaned = re.sub(r"(?is)<(script|style|noscript|svg)[^>]*>.*?</\1>", "", cleaned)
     # Strip navigation chrome (nav, header, footer, aside)
-    cleaned = re.sub(
-        r"(?is)<(nav|header|footer|aside)[^>]*>.*?</\1>", "", cleaned
-    )
+    cleaned = re.sub(r"(?is)<(nav|header|footer|aside)[^>]*>.*?</\1>", "", cleaned)
     # Try to narrow to main content area
     cleaned = _extract_main_content(cleaned)
     return cleaned
@@ -147,9 +170,7 @@ def _split_sections(
             sections.append((path, before_text))
 
         level = int(match.group(1))
-        heading_text = (
-            _html_to_text(match.group(2)) or "Untitled Section"
-        )
+        heading_text = _html_to_text(match.group(2)) or "Untitled Section"
         if title is None:
             title = heading_text
 

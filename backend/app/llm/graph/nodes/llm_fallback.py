@@ -1,11 +1,15 @@
-"""llm_fallback node — reuses existing LLM pipeline agents unchanged.
+"""llm_fallback node — full LLM SQL generation pipeline.
 
-Called when intent classifier confidence < threshold.
-Mirrors the logic in query_service.execute_nl_query() exactly.
+Receives resolved_question from resolve_turn (or the raw question on first turn).
+Uses resolved_question for build_context (schema linking) and injects
+loaded_history as conversation context for the composer.
 
 When state["resource_id"] is set (user role), a NON-NEGOTIABLE scope
 constraint is prepended to the prompt context so the LLM cannot generate
 SQL that reads data belonging to other users.
+
+On retry exhaustion, sets action=clarification with reason=retry_exhausted
+so the pipeline surfaces a helpful clarification instead of a raw error.
 """
 
 import logging
@@ -21,22 +25,6 @@ from app.llm.router import route
 from app.semantic.context_builder import build_context
 
 logger = logging.getLogger(__name__)
-
-
-def _resolve_question(question: str, history: list[dict]) -> str:
-    """Enrich a thin follow-up with prior user context for schema linking only.
-
-    Concatenates the last 2 prior user turns with the current question so that
-    the embedding used by the schema linker captures enough context to select
-    the right tables — e.g. "filter by active only" becomes
-    "show me all resources | who are billable | filter by active only".
-
-    Only used for build_context(); the bare question is passed to the LLM.
-    """
-    prior = [t["content"] for t in history if t.get("role") == "user"][-2:]
-    if not prior:
-        return question
-    return " | ".join(prior + [question])
 
 
 _SCOPE_CONSTRAINT_TEMPLATE = """\
@@ -87,23 +75,39 @@ _SCOPE_VIOLATION_MSG = (
 async def llm_fallback(state: GraphState) -> dict[str, Any]:
     """Full LLM SQL generation pipeline as a LangGraph node."""
     question = state["question"]
+    # Use resolved_question for schema linking — it's fully standalone
+    resolved_question = state.get("resolved_question") or question
     connection_id = uuid.UUID(state["connection_id"])
     db = state["db"]
     resource_id = state.get("resource_id")
     employee_id = state.get("employee_id")
 
     logger.info(
-        "intent=llm_fallback q=%r connector=%s confidence=%.3f resource_id=%s employee_id=%s",
-        question[:80], state.get("connector_type"), state.get("confidence", 0.0), resource_id, employee_id,
+        "llm_fallback: q=%r resolved=%r connector=%s resource_id=%s employee_id=%s",
+        question[:80],
+        resolved_question[:80],
+        state.get("connector_type"),
+        resource_id,
+        employee_id,
     )
 
+    if state.get("event_queue"):
+        await state["event_queue"].put(
+            {
+                "type": "stage",
+                "stage": "generating_sql",
+                "label": "Generating SQL...",
+                "progress": 40,
+            }
+        )
+
     from app.services.connection_service import get_connection
+
     conn = await get_connection(db, connection_id)
 
-    conversation_history = state.get("conversation_history") or []
-    resolved = _resolve_question(question, conversation_history)
-    context = await build_context(db, connection_id, resolved, dialect=conn.connector_type)
-    provider, llm_config = route(question)
+    # Use resolved_question for context building — it has full standalone context
+    context = await build_context(db, connection_id, resolved_question, dialect=conn.connector_type)
+    provider, llm_config = route(resolved_question)
 
     # Inject scope constraint for 'user' role (resource_id or employee_id is set)
     prompt_context = context.prompt_context
@@ -114,18 +118,32 @@ async def llm_fallback(state: GraphState) -> dict[str, Any]:
         emp_scope_block = _EMPLOYEE_ID_SCOPE_TEMPLATE.format(employee_id=employee_id)
         prompt_context = emp_scope_block + prompt_context
 
+    if state.get("event_queue"):
+        await state["event_queue"].put(
+            {
+                "type": "stage",
+                "stage": "generating_sql",
+                "label": "Generating SQL...",
+                "progress": 60,
+            }
+        )
+
     composer = QueryComposerAgent(provider, llm_config)
     composer_output = await composer.compose(
-        # Use raw question (not history-enriched `resolved`) so composer sees a
-        # clean current question. History is already injected as proper chat
-        # messages by compose() — passing `resolved` would double-encode history.
-        # `resolved` is only used above for build_context (schema/table linking).
-        question, prompt_context, conversation_history=conversation_history
+        # Pass resolved_question to composer — it's fully standalone and self-contained.
+        # loaded_history is injected as conversation context for the LLM.
+        resolved_question,
+        prompt_context,
+        conversation_history=state.get("loaded_history") or [],
     )
     generated_sql = composer_output.generated_sql
 
     # If the LLM signalled it cannot scope the query, return a clean refusal
-    if (resource_id is not None or employee_id is not None) and generated_sql and "SCOPE_VIOLATION" in generated_sql.upper():
+    if (
+        (resource_id is not None or employee_id is not None)
+        and generated_sql
+        and "SCOPE_VIOLATION" in generated_sql.upper()
+    ):
         return {
             "error": _SCOPE_VIOLATION_MSG,
             "llm_provider": provider.provider_type.value,
@@ -166,7 +184,18 @@ async def llm_fallback(state: GraphState) -> dict[str, Any]:
             )
             if not resolution.should_retry or not resolution.corrected_sql:
                 return {
-                    "error": f"SQL validation failed: {'; '.join(validation.issues)}",
+                    "action": "clarification",
+                    "clarification_reason": "retry_exhausted",
+                    "clarification_message": (
+                        f"I wasn't able to generate a valid SQL query for your question. "
+                        f"Could you rephrase it? ({'; '.join(validation.issues)})"
+                    ),
+                    "clarification_options": [
+                        "Rephrase my question",
+                        "Try a simpler version",
+                        "Show available tables",
+                    ],
+                    "error": f"SQL validation failed after {retry_count} retries",
                     "llm_provider": provider.provider_type.value,
                     "llm_model": llm_config.model,
                     "generated_sql": generated_sql,
@@ -176,11 +205,19 @@ async def llm_fallback(state: GraphState) -> dict[str, Any]:
             previous_attempts.append(final_sql)
             validation = await validator.validate(final_sql, schema_tables)
 
-    from app.services.connection_service import get_decrypted_connection_string
-    connection_string = get_decrypted_connection_string(conn)
+    # Use the connection string already decrypted and stored in state by query_service.
+    # Accessing conn.connection_string_encrypted here causes MissingGreenlet because
+    # the ORM object has been expired after awaits inside an asyncio.create_task context.
+    connection_string = state["connection_string"]
     connector = await get_or_create_connector(
         state["connection_id"], conn.connector_type, connection_string
     )
+
+    if state.get("event_queue"):
+        await state["event_queue"].put(
+            {"type": "stage", "stage": "running_query", "label": "Running query...", "progress": 75}
+        )
+
     try:
         result = await connector.execute_query(
             final_sql,

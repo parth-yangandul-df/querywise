@@ -158,10 +158,10 @@ def create_query_log_context(
     session_id: str | None = None,
 ) -> dict[str, str]:
     """Create initial log context for a query.
-    
+
     Args:
         session_id: Optional session ID
-    
+
     Returns:
         Dict with session_id and execution_id
     """

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
 
@@ -15,7 +17,9 @@ class CachedTable(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     connection_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("database_connections.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("database_connections.id", ondelete="CASCADE"),
+        nullable=False,
     )
     schema_name: Mapped[str] = mapped_column(String(255), nullable=False)
     table_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -23,9 +27,7 @@ class CachedTable(Base):
     comment: Mapped[str | None] = mapped_column(Text)
     row_count_estimate: Mapped[int | None] = mapped_column(Integer)
     description_embedding = mapped_column(Vector(settings.embedding_dimension), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -66,9 +68,7 @@ class CachedColumn(Base):
     comment: Mapped[str | None] = mapped_column(Text)
     ordinal_position: Mapped[int] = mapped_column(Integer, nullable=False)
     description_embedding = mapped_column(Vector(settings.embedding_dimension), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
     table: Mapped["CachedTable"] = relationship(back_populates="columns")
@@ -82,9 +82,15 @@ class CachedRelationship(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     connection_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("database_connections.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("database_connections.id", ondelete="CASCADE"),
+        nullable=False,
     )
     constraint_name: Mapped[str | None] = mapped_column(String(255))
+    is_manual: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    relationship_type: Mapped[str | None] = mapped_column(
+        String(50)
+    )  # explicit_fk | bridge | hierarchical | implicit_join
     source_table_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("cached_tables.id", ondelete="CASCADE"), nullable=False
     )
@@ -93,9 +99,7 @@ class CachedRelationship(Base):
         UUID(as_uuid=True), ForeignKey("cached_tables.id", ondelete="CASCADE"), nullable=False
     )
     target_column: Mapped[str] = mapped_column(String(255), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
     source_table: Mapped["CachedTable"] = relationship(

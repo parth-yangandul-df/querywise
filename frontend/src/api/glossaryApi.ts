@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { GlossaryTerm, MetricDefinition, DictionaryEntry } from '../types/api';
+import type { GlossaryTerm, MetricDefinition, DictionaryEntry, SampleQuery } from '../types/api';
 
 export const glossaryApi = {
   list: (connectionId: string) =>
@@ -21,6 +21,17 @@ export const metricsApi = {
     api.put<MetricDefinition>(`/connections/${connectionId}/metrics/${metricId}`, data).then(r => r.data),
   delete: (connectionId: string, metricId: string) =>
     api.delete(`/connections/${connectionId}/metrics/${metricId}`),
+};
+
+export const sampleQueriesApi = {
+  list: (connectionId: string) =>
+    api.get<SampleQuery[]>(`/connections/${connectionId}/sample-queries`).then(r => r.data),
+  create: (connectionId: string, data: Partial<SampleQuery>) =>
+    api.post<SampleQuery>(`/connections/${connectionId}/sample-queries`, data).then(r => r.data),
+  update: (connectionId: string, sqId: string, data: Partial<SampleQuery>) =>
+    api.put<SampleQuery>(`/connections/${connectionId}/sample-queries/${sqId}`, data).then(r => r.data),
+  delete: (connectionId: string, sqId: string) =>
+    api.delete(`/connections/${connectionId}/sample-queries/${sqId}`),
 };
 
 export const dictionaryApi = {

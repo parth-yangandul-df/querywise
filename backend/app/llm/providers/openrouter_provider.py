@@ -7,16 +7,17 @@ OpenAIProvider and only change:
   • provider_type → LLMProviderType.OPENROUTER
   • list_models() → OpenRouter model catalogue
 
-Embeddings: OpenRouter does not offer an embeddings endpoint.
-The embedding_service falls back to OpenAI when the provider is openrouter
-(same logic already used for Anthropic).
+Embeddings: OpenRouter proxies OpenAI-compatible embedding endpoints.
+When EMBEDDING_PROVIDER=openrouter, embeddings go through OpenRouter
+using the configured EMBEDDING_MODEL (e.g. openai/text-embedding-3-small).
 
 Usage (.env):
     DEFAULT_LLM_PROVIDER=openrouter
     OPENROUTER_API_KEY=sk-or-...
-    OPENROUTER_MODEL=openai/gpt-3.5-turbo
+    OPENROUTER_MODEL=deepseek/deepseek-v3.2
+    EMBEDDING_PROVIDER=openrouter
+    EMBEDDING_MODEL=openai/text-embedding-3-small
     EMBEDDING_DIMENSION=1536
-    OPENAI_API_KEY=<your-key>   # still required for embeddings
 """
 
 from collections.abc import AsyncIterator
@@ -31,6 +32,7 @@ from app.llm.base_provider import (
     LLMResponse,
 )
 from app.llm.providers.openai_provider import OpenAIProvider
+from app.llm.tracing import trace_llm_call
 
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -59,33 +61,39 @@ class OpenRouterProvider(OpenAIProvider):
     # complete() and stream() are inherited from OpenAIProvider unchanged.
     # OpenRouter returns the same response shape as OpenAI.
 
-    async def generate_embedding(self, text: str) -> list[float]:
-        """OpenRouter has no embeddings endpoint — raise a clear error.
-
-        In practice this is never called: provider_registry.get_embedding_provider()
-        maps 'openrouter' → 'openai' (same as 'anthropic'), so embeddings always
-        go through the OpenAI provider directly.
-        """
-        raise NotImplementedError(
-            "OpenRouter does not provide an embeddings endpoint. "
-            "Set OPENAI_API_KEY so embeddings can fall back to OpenAI."
-        )
-
     async def stream(
         self,
         messages: list[LLMMessage],
         config: LLMConfig,
     ) -> AsyncIterator[str]:
-        # Delegate to parent — identical wire format
-        async for token in super().stream(messages, config):
-            yield token
+        with trace_llm_call(
+            provider="openrouter",
+            model=config.model,
+            operation="stream",
+            metadata={
+                "temperature": config.temperature,
+                "max_tokens": config.max_tokens,
+            },
+        ):
+            async for token in super().stream(messages, config):
+                yield token
 
     async def complete(
         self,
         messages: list[LLMMessage],
         config: LLMConfig,
     ) -> LLMResponse:
-        return await super().complete(messages, config)
+        with trace_llm_call(
+            provider="openrouter",
+            model=config.model,
+            operation="complete",
+            metadata={
+                "temperature": config.temperature,
+                "max_tokens": config.max_tokens,
+                "messages_count": len(messages),
+            },
+        ):
+            return await super().complete(messages, config)
 
     def list_models(self) -> list[str]:
         return [

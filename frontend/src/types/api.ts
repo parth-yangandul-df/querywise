@@ -192,6 +192,18 @@ export interface UserCreate {
   employee_id?: string | null;
 }
 
+export interface SampleQuery {
+  id: string;
+  connection_id: string;
+  natural_language: string;
+  sql_query: string;
+  description: string | null;
+  tags: string[] | null;
+  is_validated: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface UserUpdate {
   email?: string;
   password?: string;

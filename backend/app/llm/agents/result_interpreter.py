@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from app.llm.base_provider import BaseLLMProvider, LLMConfig, LLMMessage
 from app.llm.prompts.interpreter_prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
+from app.llm.tracing import traceable
 from app.llm.utils import repair_json
 
 
@@ -15,11 +16,27 @@ class InterpretationOutput:
     suggested_followups: list[str]
 
 
+def format_single_value_result(rows: list[list]) -> str | None:
+    """Return a display-ready scalar when the query produced exactly one cell."""
+    if len(rows) != 1:
+        return None
+
+    row = rows[0]
+    if len(row) != 1:
+        return None
+
+    value = row[0]
+    if value is None:
+        return "NULL"
+    return str(value)
+
+
 class ResultInterpreterAgent:
     def __init__(self, provider: BaseLLMProvider, config: LLMConfig):
         self.provider = provider
         self.config = config
 
+    @traceable(name="agent.interpret_results")
     async def interpret(
         self,
         question: str,

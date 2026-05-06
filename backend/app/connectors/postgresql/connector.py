@@ -29,8 +29,10 @@ class PostgreSQLConnector(BaseConnector):
                 max_size=kwargs.get("pool_size", 5),
                 command_timeout=kwargs.get("command_timeout", 60),
             )
-        except Exception as e:
-            raise ConnectionError(str(e)) from e
+        except Exception:
+            raise ConnectionError(
+                "Unable to connect to the database. Please verify your connection settings."
+            )
 
     async def disconnect(self) -> None:
         if self._pool:
@@ -49,7 +51,7 @@ class PostgreSQLConnector(BaseConnector):
 
     async def introspect_schemas(self) -> list[str]:
         if self._pool is None:
-            raise ConnectionError("Connector not connected — call connect() first")
+            raise ConnectionError("Database connection lost. Please try again.")
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -63,7 +65,7 @@ class PostgreSQLConnector(BaseConnector):
 
     async def introspect_tables(self, schema: str = "public") -> list[TableInfo]:
         if self._pool is None:
-            raise ConnectionError("Connector not connected — call connect() first")
+            raise ConnectionError("Database connection lost. Please try again.")
         async with self._pool.acquire() as conn:
             # Get tables and views
             table_rows = await conn.fetch(
@@ -197,7 +199,7 @@ class PostgreSQLConnector(BaseConnector):
         # Safety check first
         issues = check_sql_safety(sql)
         if issues:
-            raise SQLSafetyError("; ".join(issues))
+            raise SQLSafetyError()
 
         assert self._pool is not None  # safety: already checked above via SQLSafetyError path
         wrapped_sql = sql.rstrip().rstrip(";")
@@ -209,8 +211,8 @@ class PostgreSQLConnector(BaseConnector):
                 async with conn.transaction(readonly=True):
                     await conn.execute(f"SET LOCAL statement_timeout = '{timeout_seconds * 1000}'")
                     rows = await conn.fetch(wrapped_sql)
-        except asyncpg.QueryCanceledError as e:
-            raise QueryTimeoutError(timeout_seconds) from e
+        except asyncpg.QueryCanceledError:
+            raise QueryTimeoutError(timeout_seconds)
 
         elapsed_ms = (time.monotonic() - start) * 1000
         truncated = len(rows) > max_rows
@@ -244,7 +246,7 @@ class PostgreSQLConnector(BaseConnector):
         self, schema: str, table: str, column: str, limit: int = 20
     ) -> list[Any]:
         if self._pool is None:
-            raise ConnectionError("Connector not connected — call connect() first")
+            raise ConnectionError("Database connection lost. Please try again.")
         # Use identifier quoting for safety
         query = f"""
             SELECT DISTINCT "{column}"

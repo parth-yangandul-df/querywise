@@ -1,5 +1,11 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
+from loguru import logger
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
+from app.db.session import get_db
 from app.services.embedding_progress import get_all_progress
 
 router = APIRouter(tags=["health"])
@@ -26,3 +32,34 @@ async def embedding_status():
             for p in progress.values()
         ]
     }
+
+
+@router.get("/ready")
+async def readiness_check(db: AsyncSession = Depends(get_db)):
+    """Readiness check — verifies downstream dependencies.
+
+    Not behind authentication — intended for k8s / load balancer health checks.
+    """
+    checks: dict[str, str] = {}
+    info: dict[str, str] = {}
+
+    # Check database connectivity
+    try:
+        await db.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as exc:
+        checks["database"] = f"error: {str(exc)[:100]}"
+        logger.error("readiness_check: DB unreachable: %s", exc)
+
+    # Informational (not a health check)
+    info["llm_provider"] = settings.default_llm_provider
+
+    all_ok = all(v == "ok" for v in checks.values())
+
+    if not all_ok:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not_ready", "checks": checks, "info": info},
+        )
+
+    return {"status": "ready", "checks": checks, "info": info}

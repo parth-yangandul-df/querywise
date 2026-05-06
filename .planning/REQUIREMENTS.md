@@ -268,6 +268,177 @@
 
 ---
 
+## Phase 9: Query Engine Refactor
+
+### QE-01: QueryEngine Package and Core Types
+- Create `backend/app/query_engine/` package with `__init__.py`
+- Define `ExecutionStrategy` enum: `template`, `clarify`, `generate`, `reject`
+- Define `PlanDecision` typed dict with: strategy, capability_id (optional), clarification_question (optional), rejection_reason (optional)
+- Define `PlanFilter` model: `field: str`, `op: Literal["eq","in","lt","gt","between"]`, `values: list[str]` (sanitized, max 50), SQL injection guard
+- Add docstrings and usage examples for all core types
+- No runtime behavior change — types compile and serialize correctly
+
+### QE-02: QueryPlan Contract
+- Define canonical `QueryPlan` model in `backend/app/query_engine/types.py`
+- Fields: domain, intent, task_type, filters (list[PlanFilter]), metrics, group_by, sort, limit, needs_clarification, ambiguity_reason, novel_requirements, confidence
+- `QueryPlan` outputs structured plan, NOT SQL
+- `from_untrusted_dict()` classmethod for safe deserialization
+- `to_api_dict()` for serialized output
+- `schema_version: Literal[2]` (version bump from Phase 7's version=1)
+- Tests validate serialization roundtrip and schema shape
+
+### QE-03: ConversationState Contract
+- Define canonical `ConversationState` model in `backend/app/query_engine/state.py`
+- Fields: thread_id, user_id, connection_id, messages, active_topic, active_domain, active_plan, active_filters, last_result_meta, clarification_pending, clarification_question, execution_strategy, confidence, schema_version
+- Follow-up refinement mutates active_plan; topic switch replaces active_plan
+- Clarification pauses execution until answered
+- Raw SQL is NOT primary conversation memory — plan and filters are primary
+- Tests validate state mutation rules (refine, new_topic, clarify)
+
+### QE-04: PlanDecision and Strategy Enum
+- Define `PlanDecision` and `ExecutionStrategy` with deterministic routing contract
+- Strategy decision order: reject (out of scope) → clarify (ambiguous) → template (fully covered by catalog) → generate (fallback)
+- One route decision per query — no duplicated routing logic outside selector
+- Selector behavior testable without LLM
+
+### QE-05: Query Engine Configuration Cleanup
+- Refactor scattered query configuration in `backend/app/config.py`
+- Add startup validation for required query engine settings (confidence thresholds, retry limits, row limits, timeout defaults)
+- Replace legacy feature flags (`USE_QUERY_PLAN_COMPILER`, `USE_GROQ_EXTRACTOR`, `USE_HYBRID_MODE`) with new unified query engine config model
+- Mark legacy flags as migration artifacts — remove before Phase 9 completion
+- App boots cleanly with new config; no long-lived routing flags in final architecture
+
+### QE-06: Capability Catalog Model
+- Create `backend/app/query_engine/catalog/models.py` with `CapabilityEntry` model
+- Each entry defines: intent_id, domain, business_meaning, sql_template, supported_filters, supported_grouping, supported_metrics, unsupported_operations, follow_up_behavior, result_shape, parameter_binding_rules
+- Structured metadata replaces brittle FAQ-matching intent catalog
+- All capabilities declare what filters they support and what operations they do NOT support
+
+### QE-07: Capability Catalog Registry
+- Create `backend/app/query_engine/catalog/registry.py` with `CapabilityRegistry`
+- Register all capabilities by domain and intent
+- Validate capability completeness at startup (no missing required fields)
+- Lookup methods: by_intent_id, by_domain, match_by_plan (for Capability Matcher)
+- Startup validation raises error if any domain-intent pair has incomplete metadata
+
+### QE-08: Capability Catalog Extraction
+- Extract all current trusted SQL from domain agents (resource, project, client, timesheet, user_self) into structured capability entries
+- No business-critical predefined SQL remains only inside old domain agent classes
+- Domain-specific catalog files: `catalog/resource.py`, `catalog/project.py`, `catalog/client.py`, `catalog/timesheet.py`, `catalog/user_self.py`
+- Capability extraction includes parameter binding rules translated from current `_run_intent()` methods
+- Validation tests confirm catalog entries cover all 24+ active intents
+
+### QE-09: Planner Implementation
+- Create `backend/app/query_engine/planner.py` with `QueryPlanner` service
+- Planner outputs structured `QueryPlan` — never SQL directly
+- Refactor current Groq extractor logic into planner-only behavior
+- Planner classifies domain, intent, task_type, filters, metrics, grouping, sort, limit
+- Explicitly surfaces ambiguity (needs_clarification=True, ambiguity_reason) and novelty (novel_requirements) flags
+- Planner test suite with: common queries, ambiguous queries, unsupported queries, follow-up refinement queries
+- No planner branch executes SQL directly
+
+### QE-10: Capability Matcher
+- Create `backend/app/query_engine/matcher.py` with `CapabilityMatcher`
+- Compare `QueryPlan` against capability catalog; output: full_match, partial_match, no_match
+- Match scoring considers: filter coverage, grouping support, metric support, parameter compatibility
+- Produce mismatch reasons on partial/no match (available to Strategy Selector)
+- Common supported asks map to full catalog matches; unsupported asks are not forced into bad templates
+- Unit tests for each supported intent family
+
+### QE-11: Strategy Selector
+- Create `backend/app/query_engine/selector.py` with `StrategySelector`
+- Deterministic decision order: reject if out of scope → clarify if ambiguous → template if fully covered by catalog → generate otherwise
+- One route decision per query — no parallel routing logic outside selector
+- Add metrics hooks for route counts (template, generate, clarify, reject) and latency
+- Testable without LLM invocation
+
+### QE-12: Template Executor
+- Create `backend/app/query_engine/executors/template_executor.py`
+- Execute trusted predefined query capabilities from the Capability Catalog
+- Deterministic, fast, parameterized, scope-aware
+- Parameter binding helpers (IN clause construction, NULL handling, type coercion)
+- Inject deterministic RBAC scope (user-scoped filters, row limits)
+- Execute through existing connector infrastructure
+- Return normalized execution result metadata
+- Latency measurably lower than generation path
+
+### QE-13: Generation Executor
+- Create `backend/app/query_engine/executors/generation_executor.py`
+- Handle only requests that cannot be satisfied by the capability catalog
+- Explicit fallback strategy — invoked only when Strategy Selector chooses `generate`
+- Move heavy semantic context building (glossary, schema linking, knowledge retrieval) into this path only
+- Reuse existing retrieval, glossary, and schema-linking services where useful
+- Validate and scope generated SQL through shared Execution Guard layer
+- Common catalog-supported traffic never uses this path
+
+### QE-14: Execution Guardrail Layer
+- Create `backend/app/query_engine/guards.py` and `backend/app/query_engine/validator.py`
+- Centralize: RBAC, row limits, timeout enforcement, read-only transaction mode, SQL validation, audit metadata
+- Both template and generation paths pass through the same guard layer
+- Prompt-only RBAC dependence removed — scope filters are deterministic
+- SQL validation uses blocklist from `app/utils/sql_sanitizer.py` (no DDL, DML, admin commands)
+- Timeout: configurable per-connection, enforced at execution level
+- Audit metadata: strategy used, capability_id, execution_time_ms, row_count
+
+### QE-15: Conversation State System
+- Create `backend/app/query_engine/state.py` with `ConversationState` and reducers
+- Create `backend/app/query_engine/checkpointer.py` for Postgres-backed thread persistence via LangGraph checkpointer
+- Create `backend/app/query_engine/reducers.py` for messages, active_filters, active_plan mutations
+- Create `backend/app/query_engine/conversation_resolver.py`: resolve conversational context, detect topic switches, resolve pronouns/entity references, preserve active filter state during refinement
+- Create `backend/app/query_engine/conversation_graph.py`: thin LangGraph workflow for thread lifecycle, clarification loops, checkpointing
+- State survives app restarts; behavior consistent across horizontal instances
+- Follow-up questions mutate active plan deterministically; topic switch resets plan cleanly
+
+### QE-16: Session Ownership and Security
+- Add `user_id` to `chat_sessions` model (Alembic migration)
+- Scope session endpoints by owner (user can only list/access own sessions)
+- Scope thread state by session and user
+- No cross-user session leakage
+- Thread identity is durable and user-scoped
+- Backfill or handle existing session ownership model safely; old sessions not silently orphaned
+
+### QE-17: Query Service Rewrite
+- Rewrite `backend/app/services/query_service.py` as a clean orchestrator over the new `query_engine` package
+- Replace direct LangGraph graph invocation with query engine service orchestration
+- Remove ad hoc route branching from service layer
+- Remove topic-switch heuristics from service layer (moved to Conversation Resolver)
+- Normalize result assembly (consistent response shape regardless of strategy)
+- `query_service.py` becomes significantly smaller — orchestration logic delegates to `query_engine`
+
+### QE-18: API Layer Update
+- Refactor `backend/app/api/v1/endpoints/query.py` to use new query engine service
+- API is thin and stable — endpoint delegates entirely to query service
+- Response includes metadata: strategy used, capability_id, clarification_status, thread_state_version
+- Stream endpoint no longer uses fake timer stages
+- Response contract consistent with new engine output
+
+### QE-19: Retrieval Split
+- Create `backend/app/query_engine/retrieval/lightweight.py`: entity/value resolution, glossary hints — used by template path
+- Create `backend/app/query_engine/retrieval/heavyweight.py`: full semantic context assembly (schema linking, knowledge chunks, glossary enrichment) — used only by generation path
+- Template path does not pay heavy retrieval cost (no LLM context assembly)
+- Generation path retains full semantic support
+- Both modules reuse existing services (`embedding_service`, `schema_linker`, `glossary_resolver`, `knowledge_service`)
+
+### QE-20: Observability
+- Create `backend/app/query_engine/metrics.py`
+- Track: planner latency, catalog match rate, template execution rate, generation execution rate, clarification rate, reject rate
+- Track: execution success/failure by strategy, p50/p95 latency by strategy, token cost on generation path
+- All core pipeline stages observable via structured logging
+- Production behavior explainable via metric output
+- Bottlenecks identifiable from metric data
+
+### QE-21: Legacy Retirement
+- Remove old graph routing stack: `backend/app/llm/graph/graph.py`, `backend/app/llm/graph/state.py`
+- Remove `backend/app/llm/graph/nodes/llm_groq_extractor.py`, `backend/app/llm/graph/nodes/llm_fallback.py`, `backend/app/llm/graph/nodes/plan_updater.py`
+- Remove `backend/app/llm/graph/domains/base_domain.py`, `backend/app/llm/graph/domains/registry.py`
+- Remove large portions of `backend/app/llm/graph/nodes/sql_compiler.py`
+- Remove domain-specific agent SQL implementations (migrated into catalog capabilities)
+- Remove legacy feature flags (`USE_QUERY_PLAN_COMPILER`, `USE_GROQ_EXTRACTOR`, `USE_HYBRID_MODE`)
+- No parallel architecture remains — all traffic uses query engine pipeline
+- Codebase easier to navigate and maintain
+
+---
+
 ## Traceability
 
 | Requirement | Phase | Status |
@@ -318,3 +489,24 @@
 | HYB-24 | Phase 8 | Planned |
 | HYB-25 | Phase 8 | Planned |
 | HYB-26 | Phase 8 | Planned |
+| QE-01 | Phase 9 | Planned |
+| QE-02 | Phase 9 | Planned |
+| QE-03 | Phase 9 | Planned |
+| QE-04 | Phase 9 | Planned |
+| QE-05 | Phase 9 | Planned |
+| QE-06 | Phase 9 | Planned |
+| QE-07 | Phase 9 | Planned |
+| QE-08 | Phase 9 | Planned |
+| QE-09 | Phase 9 | Planned |
+| QE-10 | Phase 9 | Planned |
+| QE-11 | Phase 9 | Planned |
+| QE-12 | Phase 9 | Planned |
+| QE-13 | Phase 9 | Planned |
+| QE-14 | Phase 9 | Planned |
+| QE-15 | Phase 9 | Planned |
+| QE-16 | Phase 9 | Planned |
+| QE-17 | Phase 9 | Planned |
+| QE-18 | Phase 9 | Planned |
+| QE-19 | Phase 9 | Planned |
+| QE-20 | Phase 9 | Planned |
+| QE-21 | Phase 9 | Planned |

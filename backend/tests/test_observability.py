@@ -1,15 +1,14 @@
 """Test stubs for observability module."""
 
-import pytest
 from unittest.mock import patch
 
 from app.llm.graph.observability import (
-    log_query_context,
-    log_fallback_event,
-    log_node_execution,
     create_query_log_context,
     log_confidence_calculation,
+    log_fallback_event,
+    log_node_execution,
     log_override_applied,
+    log_query_context,
 )
 
 
@@ -19,6 +18,7 @@ class TestObservabilityImports:
     def test_module_imports(self):
         """Module should import without errors."""
         from app.llm.graph import observability
+
         assert hasattr(observability, "log_query_context")
 
 

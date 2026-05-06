@@ -1,104 +1,90 @@
-# External Integrations
+# QueryWise Integrations
 
-**Analysis Date:** 2026-04-07
+## LLM Providers
 
-## APIs & External Services
+QueryWise supports multiple LLM providers via a pluggable architecture in `backend/app/llm/providers/`.
 
-**LLM Providers:**
-- Anthropic - Primary provider, Claude models for SQL generation
-  - SDK: `anthropic` Python package
-  - Auth: `ANTHROPIC_API_KEY` env var
-- OpenAI - Alternative LLM provider
-  - SDK: `openai` Python package
-  - Auth: `OPENAI_API_KEY` env var
-- Ollama - Local LLM (self-hosted)
-  - Implementation: Direct HTTP via httpx to Ollama REST API
-  - Auth: `OLLAMA_API_KEY` (optional for cloud Ollama)
-  - Endpoint: `OLLAMA_BASE_URL` (default: http://localhost:11434)
-- OpenRouter - Unified API for multiple providers
-  - Auth: `OPENROUTER_API_KEY` env var
-- Groq - Fast inference provider
-  - Auth: `GROQ_API_KEY` env var
+### Supported Providers
 
-**Embedding Providers:**
-- OpenAI `text-embedding-3-small` - Default embedding model
-- Ollama `nomic-embed-text` - Local embeddings (768 dimensions)
-- Configurable via `EMBEDDING_PROVIDER` and `EMBEDDING_DIMENSION`
+| Provider | Model Configuration | Embedding Support |
+|----------|---------------------|-------------------|
+| **OpenRouter** | Multiple models per role | Via OpenAI-compatible |
 
-## Data Storage
 
-**App Metadata Database:**
-- PostgreSQL 16 with pgvector extension
-- Connection: `DATABASE_URL` env var
-- Client: SQLAlchemy async with asyncpg driver
-- Purpose: Stores metadata, glossary, metrics, knowledge documents, user data
+### Provider-Specific Configuration
 
-**Target Database Connectors:**
-- PostgreSQL - Direct connection via asyncpg (built-in)
-- SQL Server - ODBC connection via aioodbc (optional, lazy-loaded)
-- Connection strings encrypted with Fernet (`ENCRYPTION_KEY`)
+**Ollama**
+- `OLLAMA_BASE_URL` — http://host.docker.internal:11434 (macOS native) or http://ollama:11434 (Docker)
+- `OLLAMA_MODEL` — llama3.1:8b
+- `OLLAMA_EMBEDDING_MODEL` — nomic-embed-text
+- Supports cloud Ollama with `OLLAMA_LLM_BASE_URL` and `OLLAMA_API_KEY`
 
-**File Storage:**
-- Local filesystem only - No cloud storage integration
+**OpenRouter**
+- `OPENROUTER_API_KEY` — Required
+- Multi-model routing:
+  - `OPENROUTER_MODEL` — Composer (SQL generation)
+  - `RESOLVER_MODEL` — Resolver (intent classification)
+  - `INTERPRETER_MODEL` — Interpreter (result summaries)
+- Embeddings via `EMBEDDING_PROVIDER=openrouter`
 
-**Caching:**
-- None - In-memory only
+### Embedding Configuration
 
-## Authentication & Identity
+- `EMBEDDING_DIMENSION` — 1536 (OpenAI/Anthropic/OpenRouter) or 768 (Ollama)
+- `EMBEDDING_MODEL` — openai/text-embedding-3-small (default)
+- `EMBEDDING_PROVIDER` — Override for embedding routing (e.g., openrouter)
 
-**Auth Provider:**
-- Custom JWT-based authentication
-- Implementation: PyJWT with bcrypt password hashing
-- Token: `jwt_secret`, `jwt_algorithm` (HS256), `jwt_expiry_seconds`
-- Routes: `/api/v1/auth/*` endpoints
+## Database Connectors
 
-## Monitoring & Observability
+Plugin system in `backend/app/connectors/` with connector registry.
 
-**Error Tracking:**
-- None - No external error tracking service
+### Built-in
 
-**Logs:**
-- Approach: loguru (structured logging to stdout + optional file rotation)
-- Config: `LOG_LEVEL`, `LOG_FILE_ENABLED`, `LOG_ROTATION`, `LOG_RETENTION`
+| Connector | Driver | Features |
+|-----------|--------|----------|
+| **PostgreSQL** | asyncpg | Connection pooling, full async |
+| **SQL Server** | aioodbc (lazy) | ODBC driver, optional dep |
 
-## CI/CD & Deployment
+### Connector Architecture
 
-**Hosting:**
-- Docker Compose for local development
-- Compatible with any container hosting (Render, Fly.io, etc.)
+- `BaseConnector` ABC defines interface
+- `connector_registry.py` manages plugin registration
+- LRU cache with 50 max connectors
+- Auto-cleanup of stale connections (1-hour default)
 
-**CI Pipeline:**
-- None detected - No GitHub Actions or similar
+## API Integration Points
 
-## Environment Configuration
+### Backend API
+- FastAPI at `/api/v1/`
+- Swagger docs at `/docs`
+- Server-sent events for streaming responses
+- JWT authentication support
 
-**Required env vars:**
-- `DATABASE_URL` - App metadata PostgreSQL connection
-- `JWT_SECRET` - Secret for JWT token signing
-- `ENCRYPTION_KEY` - Fernet key for connection string encryption
-- `ANTHROPIC_API_KEY` - Required for Anthropic LLM
-- `OPENAI_API_KEY` - Required for OpenAI LLM/embeddings
-- `DEFAULT_LLM_PROVIDER` - Which LLM to use (anthropic, openai, ollama, openrouter, groq)
-- `DEFAULT_LLM_MODEL` - Default model name
+### Frontend APIs
+- **Mantine UI** (port 5173) — Full admin interface
+- **Chatbot UI** (port 5174) — Conversational interface
 
-**Optional env vars:**
-- `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `OLLAMA_API_KEY`
-- `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_EMBEDDING_MODEL`
-- `EMBEDDING_PROVIDER`, `EMBEDDING_DIMENSION`
-- `CORS_ORIGINS`
+### External Services
+- **PostgreSQL** — Application metadata storage
+- **LLM APIs** — Anthropic, OpenAI, OpenRouter, Groq, Ollama
 
-**Secrets location:**
-- `.env` file at project root
-- Loaded by `pydantic-settings` in `backend/app/config.py`
+## Feature Flags
 
-## Webhooks & Callbacks
+| Flag | Default | Description |
+|------|---------|-------------|
+| `USE_GROQ_EXTRACTOR` | false | Groq unified intent + filter extractor |
+| `USE_QUERY_PLAN_COMPILER` | false | QueryPlan compiler |
+| `USE_HYBRID_MODE` | false | Context-aware query system |
 
-**Incoming:**
-- None detected
+## Environment Variables Summary
 
-**Outgoing:**
-- None detected
+### Required for Production
+- `DATABASE_URL`
+- `ENCRYPTION_KEY`
+- LLM provider API keys
 
----
-
-*Integration audit: 2026-04-07*
+### Optional
+- `JWT_SECRET`, `JWT_ALGORITHM`, `JWT_EXPIRY_SECONDS` — Auth
+- `CORS_ORIGINS` — Frontend access
+- `DEFAULT_QUERY_TIMEOUT_SECONDS`, `MAX_RETRY_ATTEMPTS` — Query config
+- `MAX_QUERIES_PER_MINUTE` — Rate limiting
+- `MAX_CONTEXT_TABLES`, `MAX_SAMPLE_QUERIES` — Context limits

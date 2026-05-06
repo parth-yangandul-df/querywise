@@ -18,7 +18,6 @@ Module-level cache:
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +47,7 @@ def get_cached_value_map() -> dict[str, dict[str, str]]:
 # ---------------------------------------------------------------------------
 # resolve_glossary_hints
 # ---------------------------------------------------------------------------
+
 
 async def resolve_glossary_hints(
     db: AsyncSession,
@@ -96,7 +96,9 @@ async def resolve_glossary_hints(
 
         logger.debug(
             "semantic_resolver: resolved %d glossary hints for domain='%s' connection='%s'",
-            len(hints), domain, connection_id,
+            len(hints),
+            domain,
+            connection_id,
         )
         return hints
 
@@ -112,6 +114,7 @@ async def resolve_glossary_hints(
 # ---------------------------------------------------------------------------
 # load_value_map
 # ---------------------------------------------------------------------------
+
 
 async def load_value_map(db: AsyncSession) -> dict[str, dict[str, str]]:
     """Load dictionary entries from DB into a field-keyed value map.
@@ -131,9 +134,9 @@ async def load_value_map(db: AsyncSession) -> dict[str, dict[str, str]]:
     global _value_map_cache
 
     try:
-        from app.db.models.dictionary import DictionaryEntry
-        from app.db.models.schema_cache import CachedColumn
         from sqlalchemy.orm import joinedload
+
+        from app.db.models.dictionary import DictionaryEntry
 
         result = await db.execute(
             select(DictionaryEntry).options(joinedload(DictionaryEntry.column))
@@ -180,6 +183,7 @@ async def load_value_map(db: AsyncSession) -> dict[str, dict[str, str]]:
 # normalize_value
 # ---------------------------------------------------------------------------
 
+
 def normalize_value(
     value: str,
     field: str,
@@ -217,6 +221,7 @@ def normalize_value(
 # normalize_values_batch
 # ---------------------------------------------------------------------------
 
+
 def normalize_values_batch(
     filters: list[FilterClause],
     value_map: dict[str, dict[str, str]],
@@ -247,21 +252,22 @@ def normalize_values_batch(
             result.append(fc)
             continue
 
-        normalized_values = [
-            normalize_value(v, fc.field, value_map)
-            for v in fc.values
-        ]
+        normalized_values = [normalize_value(v, fc.field, value_map) for v in fc.values]
 
         if normalized_values != fc.values:
             logger.debug(
                 "semantic_resolver: normalized field='%s' values %s → %s",
-                fc.field, fc.values, normalized_values,
+                fc.field,
+                fc.values,
+                normalized_values,
             )
 
-        result.append(FilterClause(
-            field=fc.field,
-            op=fc.op,
-            values=normalized_values,
-        ))
+        result.append(
+            FilterClause(
+                field=fc.field,
+                op=fc.op,
+                values=normalized_values,
+            )
+        )
 
     return result

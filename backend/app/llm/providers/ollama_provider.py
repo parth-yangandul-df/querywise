@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 import httpx
 
 from app.config import settings
+from app.core.exceptions import raise_if_provider_rate_limited
 from app.llm.base_provider import (
     BaseLLMProvider,
     LLMConfig,
@@ -14,6 +15,8 @@ from app.llm.base_provider import (
     LLMProviderType,
     LLMResponse,
 )
+from app.llm.retry import llm_retry
+from app.llm.tracing import trace_llm_call
 
 
 class OllamaProvider(BaseLLMProvider):
@@ -52,14 +55,15 @@ class OllamaProvider(BaseLLMProvider):
         # Separate clients: LLM client (possibly cloud + auth), embedding client (local, no auth)
         self._client = httpx.AsyncClient(
             base_url=llm_base_url,
-            timeout=120.0,
+            timeout=60.0,
             headers=llm_headers,
         )
         self._embed_client = httpx.AsyncClient(
             base_url=embedding_base_url,
-            timeout=120.0,
+            timeout=60.0,
         )
 
+    @llm_retry()
     async def complete(
         self,
         messages: list[LLMMessage],
@@ -84,13 +88,26 @@ class OllamaProvider(BaseLLMProvider):
 
         start = time.monotonic()
         try:
-            resp = await self._client.post("/chat", json=payload)
-            resp.raise_for_status()
+            with trace_llm_call(
+                provider="ollama",
+                model=config.model,
+                operation="complete",
+                metadata={
+                    "temperature": config.temperature,
+                    "max_tokens": config.max_tokens,
+                    "messages_count": len(messages),
+                },
+            ):
+                resp = await self._client.post("/chat", json=payload)
+                resp.raise_for_status()
         except httpx.ConnectError as err:
             raise ConnectionError(
                 f"Cannot connect to Ollama at {settings.ollama_llm_base_url or settings.ollama_base_url}. "
                 "Is Ollama running? Start it with: ollama serve"
             ) from err
+        except httpx.HTTPStatusError as err:
+            raise_if_provider_rate_limited(err, "Ollama")
+            raise
         elapsed_ms = (time.monotonic() - start) * 1000
 
         data = resp.json()
@@ -124,23 +141,36 @@ class OllamaProvider(BaseLLMProvider):
         }
 
         try:
-            async with self._client.stream("POST", "/chat", json=payload) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line:
-                        continue
-                    chunk = json.loads(line)
-                    content = chunk.get("message", {}).get("content", "")
-                    if content:
-                        yield content
-                    if chunk.get("done", False):
-                        break
+            with trace_llm_call(
+                provider="ollama",
+                model=config.model,
+                operation="stream",
+                metadata={
+                    "temperature": config.temperature,
+                    "max_tokens": config.max_tokens,
+                },
+            ):
+                async with self._client.stream("POST", "/chat", json=payload) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        chunk = json.loads(line)
+                        content = chunk.get("message", {}).get("content", "")
+                        if content:
+                            yield content
+                        if chunk.get("done", False):
+                            break
         except httpx.ConnectError as err:
             raise ConnectionError(
                 f"Cannot connect to Ollama at {settings.ollama_llm_base_url or settings.ollama_base_url}. "
                 "Is Ollama running? Start it with: ollama serve"
             ) from err
+        except httpx.HTTPStatusError as err:
+            raise_if_provider_rate_limited(err, "Ollama")
+            raise
 
+    @llm_retry()
     async def generate_embedding(self, text: str) -> list[float]:
         """Generate embeddings using Ollama's embedding endpoint.
 
@@ -149,23 +179,28 @@ class OllamaProvider(BaseLLMProvider):
         """
         model = settings.ollama_embedding_model
 
-        try:
-            return await self._embed_new_api(text, model)
-        except httpx.HTTPStatusError as err:
-            if err.response.status_code == 404:
-                return await self._embed_legacy_api(text, model)
-            raise
-        except httpx.ConnectError as err:
-            raise ConnectionError(
-                f"Cannot connect to Ollama at {settings.ollama_base_url}. "
-                "Is Ollama running? Start it with: ollama serve"
-            ) from err
+        with trace_llm_call(
+            provider="ollama",
+            model=model,
+            operation="embed",
+            metadata={"text_length": len(text)},
+        ):
+            try:
+                return await self._embed_new_api(text, model)
+            except httpx.HTTPStatusError as err:
+                raise_if_provider_rate_limited(err, "Ollama")
+                if err.response.status_code == 404:
+                    return await self._embed_legacy_api(text, model)
+                raise
+            except httpx.ConnectError as err:
+                raise ConnectionError(
+                    f"Cannot connect to Ollama at {settings.ollama_base_url}. "
+                    "Is Ollama running? Start it with: ollama serve"
+                ) from err
 
     async def _embed_new_api(self, text: str, model: str) -> list[float]:
         """Ollama 0.4+ /api/embed endpoint."""
-        resp = await self._embed_client.post(
-            "/embed", json={"model": model, "input": text}
-        )
+        resp = await self._embed_client.post("/embed", json={"model": model, "input": text})
         resp.raise_for_status()
         data = resp.json()
         embeddings = data.get("embeddings", [])
@@ -188,6 +223,9 @@ class OllamaProvider(BaseLLMProvider):
                 f"Cannot connect to Ollama at {settings.ollama_base_url}. "
                 "Is Ollama running? Start it with: ollama serve"
             ) from err
+        except httpx.HTTPStatusError as err:
+            raise_if_provider_rate_limited(err, "Ollama")
+            raise
         data = resp.json()
         embedding = data.get("embedding", [])
         if not embedding:

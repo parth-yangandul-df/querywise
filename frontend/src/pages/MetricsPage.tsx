@@ -20,7 +20,7 @@ import {
 } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
-import { IconPlus, IconTrash, IconEdit, IconUpload } from '@tabler/icons-react';
+import { IconPlus, IconTrash, IconEdit, IconUpload, IconSearch } from '@tabler/icons-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { metricsApi } from '../api/glossaryApi';
 import { useConnections } from '../hooks/useConnections';
@@ -36,6 +36,7 @@ export function MetricsPage() {
     null
   );
   const [csvOpen, setCsvOpen] = useState(false);
+  const [search, setSearch] = useState('');
 
   const { data: connections } = useConnections();
   const qc = useQueryClient();
@@ -52,7 +53,16 @@ export function MetricsPage() {
     enabled: !!connectionId,
   });
 
-  const { page, setPage, totalPages, total, paged, pageSize } = usePagination(metrics);
+  const filteredMetrics = metrics?.filter((m) => {
+    const q = search.toLowerCase();
+    return (
+      m.display_name.toLowerCase().includes(q) ||
+      m.metric_name.toLowerCase().includes(q) ||
+      (m.description ?? '').toLowerCase().includes(q)
+    );
+  });
+
+  const { page, setPage, totalPages, total, paged, pageSize } = usePagination(filteredMetrics);
 
   const deleteMutation = useMutation({
     mutationFn: ({ connId, metricId }: { connId: string; metricId: string }) =>
@@ -84,13 +94,23 @@ export function MetricsPage() {
         </Group>
       </Group>
 
-      <Select
-        label="Connection"
-        data={connOptions}
-        value={connectionId}
-        onChange={setConnectionId}
-        w={300}
-      />
+      <Group>
+        <Select
+          label="Connection"
+          data={connOptions}
+          value={connectionId}
+          onChange={setConnectionId}
+          w={300}
+        />
+        <TextInput
+          label="Search"
+          placeholder="Search metrics..."
+          leftSection={<IconSearch size={14} />}
+          value={search}
+          onChange={(e) => { setSearch(e.currentTarget.value); setPage(1); }}
+          w={300}
+        />
+      </Group>
 
       {isLoading && (
         <Group justify="center" py="xl">

@@ -14,6 +14,7 @@ Passwords (bcrypt-hashed, cost=12):
   user@querywise.dev    → user123
 """
 
+import os
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -65,24 +66,28 @@ def upgrade() -> None:
     )
     op.create_index("ix_users_email", "users", ["email"], unique=True)
 
-    # 2. Seed dev users — UUIDs are literals cast inline to avoid asyncpg
-    #    inferring VARCHAR for named bind parameters on UUID columns.
-    op.execute(
-        sa.text(
-            f"""
-            INSERT INTO users (id, email, hashed_password, role, resource_id, is_active)
-            VALUES
-                ('{_ADMIN_ID}'::uuid,   'admin@querywise.dev',   :admin_hash,   'admin',   NULL, true),
-                ('{_MANAGER_ID}'::uuid, 'manager@querywise.dev', :manager_hash, 'manager', NULL, true),
-                ('{_USER_ID}'::uuid,    'user@querywise.dev',    :user_hash,    'user',    39,   true)
-            ON CONFLICT (email) DO NOTHING
-            """
-        ).bindparams(
-            admin_hash=_ADMIN_HASH,
-            manager_hash=_MANAGER_HASH,
-            user_hash=_USER_HASH,
+    # Seed dev users only in explicitly-named development environments.
+    # Uses os.environ directly since Alembic runs outside FastAPI app context
+    # and cannot access settings (which requires DB connectivity at import time).
+    if os.environ.get("ENVIRONMENT", "development") == "development":
+        # UUIDs are literals cast inline to avoid asyncpg
+        #    inferring VARCHAR for named bind parameters on UUID columns.
+        op.execute(
+            sa.text(
+                f"""
+                INSERT INTO users (id, email, hashed_password, role, resource_id, is_active)
+                VALUES
+                    ('{_ADMIN_ID}'::uuid,   'admin@querywise.dev',   :admin_hash,   'admin',   NULL, true),
+                    ('{_MANAGER_ID}'::uuid, 'manager@querywise.dev', :manager_hash, 'manager', NULL, true),
+                    ('{_USER_ID}'::uuid,    'user@querywise.dev',    :user_hash,    'user',    39,   true)
+                ON CONFLICT (email) DO NOTHING
+                """
+            ).bindparams(
+                admin_hash=_ADMIN_HASH,
+                manager_hash=_MANAGER_HASH,
+                user_hash=_USER_HASH,
+            )
         )
-    )
 
     # 3. Alter query_executions.user_id: VARCHAR(255) → UUID FK → users.id
     #    Existing rows have NULL, so USING NULL is safe.

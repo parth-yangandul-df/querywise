@@ -1,9 +1,8 @@
 """Tests for QueryPlan and FilterClause Pydantic models."""
 
 import pytest
+from app.llm.graph.query_plan import FilterClause, QueryPlan
 from pydantic import ValidationError
-
-from app.llm.graph.query_plan import QueryPlan, FilterClause
 
 
 class TestFilterClause:
@@ -43,7 +42,19 @@ class TestFilterClause:
         dangerous = "'; DROP TABLE users; --"
         fc = FilterClause(field="name", op="eq", values=[dangerous])
         # Sanitized value should not contain the dangerous patterns
-        for pattern in (";", "'", "--", "/*", "*/", "DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "TRUNCATE"):
+        for pattern in (
+            ";",
+            "'",
+            "--",
+            "/*",
+            "*/",
+            "DROP",
+            "DELETE",
+            "INSERT",
+            "UPDATE",
+            "ALTER",
+            "TRUNCATE",
+        ):
             assert pattern not in fc.values[0].upper()
 
     def test_single_string_value_coerced_to_list(self):
@@ -176,8 +187,9 @@ class TestGraphState:
 
     def test_graph_state_accepts_query_plan_field(self):
         """GraphState TypedDict includes query_plan: dict | None field."""
-        from app.llm.graph.state import GraphState
         import typing
+
+        from app.llm.graph.state import GraphState
 
         hints = typing.get_type_hints(GraphState)
         assert "query_plan" in hints

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_optional_user, require_role
+from app.api.deps import get_current_user, require_role
 from app.api.v1.schemas.knowledge import (
     FetchUrlRequest,
     FetchUrlResponse,
@@ -35,7 +35,7 @@ router = APIRouter(tags=["knowledge"])
 async def list_knowledge_documents(
     connection_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(
         select(KnowledgeDocument)
@@ -74,7 +74,7 @@ async def get_knowledge_document(
     connection_id: uuid.UUID,
     document_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(
         select(KnowledgeDocument)
@@ -110,7 +110,7 @@ async def delete_knowledge_document(
 )
 async def fetch_url_content(
     body: FetchUrlRequest,
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(require_role("admin")),
 ):
     """Fetch a URL and return its text content (HTML is parsed to plain text)."""
     url = body.url.strip()

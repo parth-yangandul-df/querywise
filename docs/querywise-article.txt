@@ -126,8 +126,6 @@ QueryWise is open-source. The repo is structured as a full production applicatio
 
 If you're building text-to-SQL for your organization and hitting the "works on demos, fails on real data" wall, the semantic layer approach might be what you're missing.
 
-GitHub: [link in comments]
-C̶l̶a̶u̶d̶e̶ 
-Cosmin Chauciuc
+
 
 #TextToSQL #LLM #DataEngineering #NLP #SemanticLayer #RAG #PostgreSQL #Python #OpenSource

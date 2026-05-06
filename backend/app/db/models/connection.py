@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
 
@@ -6,6 +8,10 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.models.schema_cache import CachedTable
+from app.db.models.glossary import GlossaryTerm
+from app.db.models.metric import MetricDefinition
+from app.db.models.sample_query import SampleQuery
 
 
 class DatabaseConnection(Base):
@@ -27,23 +33,21 @@ class DatabaseConnection(Base):
     allowed_table_names: Mapped[list[str] | None] = mapped_column(
         JSONB, nullable=True, default=None
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     # Relationships
-    tables: Mapped[list["CachedTable"]] = relationship(  # noqa: F821
-        back_populates="connection", cascade="all, delete-orphan"
+    tables: Mapped[list["CachedTable"]] = relationship(
+        "CachedTable", back_populates="connection", cascade="all, delete-orphan"
     )
-    glossary_terms: Mapped[list["GlossaryTerm"]] = relationship(  # noqa: F821
-        back_populates="connection", cascade="all, delete-orphan"
+    glossary_terms: Mapped[list["GlossaryTerm"]] = relationship(
+        "GlossaryTerm", back_populates="connection", cascade="all, delete-orphan"
     )
-    metric_definitions: Mapped[list["MetricDefinition"]] = relationship(  # noqa: F821
-        back_populates="connection", cascade="all, delete-orphan"
+    metric_definitions: Mapped[list["MetricDefinition"]] = relationship(
+        "MetricDefinition", back_populates="connection", cascade="all, delete-orphan"
     )
-    sample_queries: Mapped[list["SampleQuery"]] = relationship(  # noqa: F821
-        back_populates="connection", cascade="all, delete-orphan"
+    sample_queries: Mapped[list["SampleQuery"]] = relationship(
+        "SampleQuery", back_populates="connection", cascade="all, delete-orphan"
     )

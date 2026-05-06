@@ -65,6 +65,8 @@ async def create_glossary_term(
         term.term_embedding = await embed_glossary_term(term)
     except Exception:
         logger.warning("Failed to embed glossary term %s", term.id, exc_info=True)
+    await db.flush()
+    await db.refresh(term)
     return term
 
 
@@ -107,6 +109,8 @@ async def update_glossary_term(
         term.term_embedding = await embed_glossary_term(term)
     except Exception:
         logger.warning("Failed to embed glossary term %s", term_id, exc_info=True)
+    await db.flush()
+    await db.refresh(term)
     return term
 
 

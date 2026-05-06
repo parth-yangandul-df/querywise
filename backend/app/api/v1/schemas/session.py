@@ -25,6 +25,8 @@ class SessionMessageResponse(BaseModel):
     connection_id: UUID
     session_id: UUID | None
     natural_language: str
+    turn_type: str = "query"
+    clarification_reason: str | None = None
     generated_sql: str | None
     final_sql: str | None
     execution_status: str
@@ -33,6 +35,8 @@ class SessionMessageResponse(BaseModel):
     execution_time_ms: float | None
     retry_count: int
     result_summary: str | None
+    result_columns: list[str] | None = None
+    result_preview_rows: list[list] | None = None
     is_favorite: bool
     created_at: datetime
 

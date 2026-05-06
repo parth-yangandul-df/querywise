@@ -10,14 +10,13 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from app.llm.graph.domains.base_domain import _is_refine_mode, _strip_order_by
 from app.llm.graph.domains.resource import ResourceAgent
-from app.connectors.base_connector import QueryResult
 
+from app.connectors.base_connector import QueryResult
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -85,6 +84,7 @@ def _make_query_result(columns: list[str] | None = None) -> QueryResult:
 # _strip_order_by tests
 # ---------------------------------------------------------------------------
 
+
 class TestStripOrderBy:
     def test_strips_trailing_order_by(self):
         sql = "SELECT * FROM t ORDER BY name"
@@ -130,6 +130,7 @@ class TestStripOrderBy:
 # _is_refine_mode tests
 # ---------------------------------------------------------------------------
 
+
 class TestIsRefineMode:
     def test_true_when_both_flags_set(self):
         params = {"_refine_mode": True, "_prior_sql": "SELECT * FROM t"}
@@ -158,6 +159,7 @@ class TestIsRefineMode:
 # ---------------------------------------------------------------------------
 # ResourceAgent._run_refinement — unified skill filter (both patterns)
 # ---------------------------------------------------------------------------
+
 
 class TestResourceAgentRefinementBenched:
     @pytest.mark.asyncio
@@ -201,7 +203,9 @@ class TestResourceAgentRefinementBenched:
         }
         state = _make_state("benched_resources", params)
 
-        sql, _ = await agent._run_refinement(BENCHED_SQL_WITH_ORDER_BY, params, mock_connector, state)
+        sql, _ = await agent._run_refinement(
+            BENCHED_SQL_WITH_ORDER_BY, params, mock_connector, state
+        )
 
         # Both benched and active use unified prev.EMPID reference
         assert "prev.EMPID" in sql
@@ -225,7 +229,11 @@ class TestResourceAgentRefinementBenched:
         await agent._run_refinement(BENCHED_SQL_WITH_ORDER_BY, params, mock_connector, state)
 
         call_kwargs = mock_connector.execute_query.call_args
-        passed_params = call_kwargs.kwargs.get("params") or call_kwargs.args[1] if len(call_kwargs.args) > 1 else None
+        passed_params = (
+            call_kwargs.kwargs.get("params") or call_kwargs.args[1]
+            if len(call_kwargs.args) > 1
+            else None
+        )
         # Params kwarg is used
         assert mock_connector.execute_query.called
         _, kw = mock_connector.execute_query.call_args
@@ -236,6 +244,7 @@ class TestResourceAgentRefinementBenched:
 # ---------------------------------------------------------------------------
 # ResourceAgent._run_refinement — active_resources pattern
 # ---------------------------------------------------------------------------
+
 
 class TestResourceAgentRefinementActive:
     @pytest.mark.asyncio
@@ -253,7 +262,9 @@ class TestResourceAgentRefinementActive:
         }
         state = _make_state("active_resources", params)
 
-        sql, _ = await agent._run_refinement(ACTIVE_SQL_WITH_ORDER_BY, params, mock_connector, state)
+        sql, _ = await agent._run_refinement(
+            ACTIVE_SQL_WITH_ORDER_BY, params, mock_connector, state
+        )
 
         assert "AS prev" in sql
         assert "prev.EMPID" in sql
@@ -285,6 +296,7 @@ class TestResourceAgentRefinementActive:
 # ResourceAgent._run_refinement — no skill param → fallback to _run_intent
 # ---------------------------------------------------------------------------
 
+
 class TestResourceAgentRefinementNoSkill:
     @pytest.mark.asyncio
     async def test_no_skill_falls_back_to_run_intent(self):
@@ -302,8 +314,12 @@ class TestResourceAgentRefinementNoSkill:
         state = _make_state("benched_resources", params)
 
         # Patch _run_intent to verify it gets called
-        with patch.object(agent, "_run_intent", new=AsyncMock(return_value=("SELECT 1", _make_query_result()))) as mock_run_intent:
-            sql, _ = await agent._run_refinement(BENCHED_SQL_WITH_ORDER_BY, params, mock_connector, state)
+        with patch.object(
+            agent, "_run_intent", new=AsyncMock(return_value=("SELECT 1", _make_query_result()))
+        ) as mock_run_intent:
+            sql, _ = await agent._run_refinement(
+                BENCHED_SQL_WITH_ORDER_BY, params, mock_connector, state
+            )
             mock_run_intent.assert_called_once()
 
     @pytest.mark.asyncio
@@ -321,6 +337,8 @@ class TestResourceAgentRefinementNoSkill:
         }
         state = _make_state("active_resources", params)
 
-        with patch.object(agent, "_run_intent", new=AsyncMock(return_value=("SELECT 1", _make_query_result()))) as mock_run_intent:
+        with patch.object(
+            agent, "_run_intent", new=AsyncMock(return_value=("SELECT 1", _make_query_result()))
+        ) as mock_run_intent:
             await agent._run_refinement(ACTIVE_SQL_WITH_ORDER_BY, params, mock_connector, state)
             mock_run_intent.assert_called_once()

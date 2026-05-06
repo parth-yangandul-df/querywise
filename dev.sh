@@ -26,8 +26,6 @@ NC='\033[0m'
 PORT_DB=5434
 PORT_BACKEND=8000
 PORT_FRONTEND=5173
-PORT_CHATBOT=5174
-PORT_WIDGET=4000
 PORT_ANGULAR=4200
 PORT_OLLAMA=11434
 
@@ -404,80 +402,6 @@ stop_frontend() {
 }
 
 # =============================================================================
-# Chatbot Frontend
-# =============================================================================
-
-start_chatbot() {
-    log_step "Starting Chatbot Frontend on port $PORT_CHATBOT..."
-
-    if is_port_in_use $PORT_CHATBOT; then
-        log_warn "Chatbot Frontend already running on port $PORT_CHATBOT"
-        return 0
-    fi
-
-    local pid_file="$PIDS_DIR/chatbot.pid"
-    mkdir -p "$PIDS_DIR" 2>/dev/null || true
-
-    if [[ ! -d "$SCRIPT_DIR/chatbot-frontend/node_modules" ]]; then
-        log_info "Installing chatbot-frontend dependencies..."
-        npm install --prefix "$SCRIPT_DIR/chatbot-frontend" 2>/dev/null || true
-    fi
-
-    bash -c "
-        cd '$SCRIPT_DIR/chatbot-frontend'
-        echo \$\$ > '$pid_file'
-        exec npm run dev
-    " >/dev/null 2>&1 &
-
-    if wait_for_port $PORT_CHATBOT 20; then
-        log_info "Chatbot Frontend started (PID: $(cat "$pid_file" 2>/dev/null || echo unknown))"
-    else
-        log_warn "Chatbot Frontend may not have started — check manually"
-    fi
-}
-
-stop_chatbot() {
-    stop_service "chatbot" $PORT_CHATBOT
-}
-
-# =============================================================================
-# Widget Server
-# =============================================================================
-
-start_widget() {
-    log_step "Starting Widget Server on port $PORT_WIDGET..."
-
-    if is_port_in_use $PORT_WIDGET; then
-        log_warn "Widget Server already running on port $PORT_WIDGET"
-        return 0
-    fi
-
-    local pid_file="$PIDS_DIR/widget.pid"
-    mkdir -p "$PIDS_DIR" 2>/dev/null || true
-
-    if [[ ! -d "$SCRIPT_DIR/chatbot-frontend/dist-widget" ]]; then
-        log_info "Building widget bundle..."
-        npm run --prefix "$SCRIPT_DIR/chatbot-frontend" build:widget 2>/dev/null || true
-    fi
-
-    bash -c "
-        cd '$SCRIPT_DIR/chatbot-frontend'
-        echo \$\$ > '$pid_file'
-        exec npx serve dist-widget --cors -p $PORT_WIDGET
-    " >/dev/null 2>&1 &
-
-    if wait_for_port $PORT_WIDGET 15; then
-        log_info "Widget Server started (PID: $(cat "$pid_file" 2>/dev/null || echo unknown))"
-    else
-        log_warn "Widget Server may not have started — check manually"
-    fi
-}
-
-stop_widget() {
-    stop_service "widget" $PORT_WIDGET
-}
-
-# =============================================================================
 # Angular Test App
 # =============================================================================
 
@@ -547,12 +471,6 @@ cmd_start() {
     start_frontend
     echo ""
 
-    start_chatbot
-    echo ""
-
-    start_widget
-    echo ""
-
     start_angular
     echo ""
 
@@ -566,10 +484,6 @@ cmd_stop() {
     echo ""
 
     stop_angular
-    echo ""
-    stop_widget
-    echo ""
-    stop_chatbot
     echo ""
     stop_frontend
     echo ""
@@ -597,16 +511,6 @@ cmd_restart() {
             echo ""
             start_frontend
             ;;
-        chatbot)
-            stop_chatbot
-            echo ""
-            start_chatbot
-            ;;
-        widget)
-            stop_widget
-            echo ""
-            start_widget
-            ;;
         angular)
             stop_angular
             echo ""
@@ -619,7 +523,7 @@ cmd_restart() {
             ;;
         *)
             log_error "Unknown service: $service"
-            log_info "Valid services: backend, frontend, chatbot, widget, angular"
+            log_info "Valid services: backend, frontend, angular"
             return 1
             ;;
     esac
@@ -634,13 +538,11 @@ cmd_status() {
         ["Ollama"]=$PORT_OLLAMA
         ["Backend"]=$PORT_BACKEND
         ["Frontend"]=$PORT_FRONTEND
-        ["Chatbot"]=$PORT_CHATBOT
-        ["Widget"]=$PORT_WIDGET
         ["Angular"]=$PORT_ANGULAR
     )
 
     # Print in a stable order
-    local ordered_services=("PostgreSQL" "Ollama" "Backend" "Frontend" "Chatbot" "Widget" "Angular")
+    local ordered_services=("PostgreSQL" "Ollama" "Backend" "Frontend" "Angular")
     for name in "${ordered_services[@]}"; do
         local port=${service_ports[$name]}
         if is_port_in_use "$port"; then
@@ -693,7 +595,7 @@ cmd_clean() {
     log_warn "Cleaning up all development processes..."
     echo ""
 
-    local all_ports=($PORT_BACKEND $PORT_FRONTEND $PORT_CHATBOT $PORT_WIDGET $PORT_ANGULAR)
+    local all_ports=($PORT_BACKEND $PORT_FRONTEND $PORT_ANGULAR)
 
     # Kill all processes holding our ports (port-based, no broad process-name kills)
     log_step "Killing processes on project ports..."
@@ -774,15 +676,13 @@ show_usage() {
     echo "  clean              Kill all dev processes and clean up"
     echo ""
     echo "Services (for restart):"
-    echo "  backend  frontend  chatbot  widget  angular"
+    echo "  backend  frontend  angular"
     echo ""
     echo "Ports:"
     printf "  %-22s port %s\n" "PostgreSQL (Docker)"  "$PORT_DB"
     printf "  %-22s port %s\n" "Ollama (system)"      "$PORT_OLLAMA"
     printf "  %-22s port %s\n" "Backend (uvicorn)"    "$PORT_BACKEND"
     printf "  %-22s port %s\n" "Frontend (Vite)"      "$PORT_FRONTEND"
-    printf "  %-22s port %s\n" "Chatbot (Vite)"       "$PORT_CHATBOT"
-    printf "  %-22s port %s\n" "Widget Server"        "$PORT_WIDGET"
     printf "  %-22s port %s\n" "Angular Test"         "$PORT_ANGULAR"
 }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Stack,
   Title,
@@ -6,6 +6,7 @@ import {
   Group,
   Table,
   Modal,
+  NumberInput,
   TextInput,
   Select,
   ActionIcon,
@@ -167,13 +168,29 @@ function UserFormModal({
     },
   });
 
+  useEffect(() => {
+    if (user) {
+      form.setValues({
+        email: user.email,
+        password: '',
+        role: user.role,
+        resource_id: user.resource_id,
+        employee_id: user.employee_id ?? '',
+        is_active: user.is_active,
+      });
+    } else {
+      form.reset();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
   const mutation = useMutation({
     mutationFn: (values: Record<string, unknown>) => {
       if (isEdit) {
         const updateData: Record<string, unknown> = {
           email: values.email,
           role: values.role,
-          resource_id: values.resource_id,
+          resource_id: values.resource_id != null ? Number(values.resource_id) : null,
           employee_id: values.employee_id || null,
           is_active: values.is_active,
         };
@@ -238,9 +255,8 @@ function UserFormModal({
             required
             {...form.getInputProps('role')}
           />
-          <TextInput
+          <NumberInput
             label="Resource ID"
-            type="number"
             {...form.getInputProps('resource_id')}
           />
           <TextInput

@@ -112,17 +112,16 @@ def get_inferred_relationships(
         Filtered list of InferredRelationship objects.
     """
     selected_lower = {n.lower() for n in selected_table_names}
-    applicable = [
-        rule
-        for rule in _INFERRED_RULES
-        if rule.source_table.lower() in selected_lower
-    ]
+    applicable = [rule for rule in _INFERRED_RULES if rule.source_table.lower() in selected_lower]
     if applicable:
         logger.info(
             "relationship_inference: %d inferred rules for tables %s: %s",
             len(applicable),
             selected_table_names,
-            [(r.source_table, r.source_column, r.target_table, r.target_column) for r in applicable],
+            [
+                (r.source_table, r.source_column, r.target_table, r.target_column)
+                for r in applicable
+            ],
         )
     return applicable
 
@@ -142,7 +141,11 @@ def get_referenced_tables(
         if rule.source_table.lower() in selected_lower:
             target_lower = rule.target_table.lower()
             # Skip self-joins (source == target)
-            if target_lower != rule.source_table.lower() and target_lower not in selected_lower and target_lower not in seen:
+            if (
+                target_lower != rule.source_table.lower()
+                and target_lower not in selected_lower
+                and target_lower not in seen
+            ):
                 missing.append(rule.target_table)
                 seen.add(target_lower)
     return missing

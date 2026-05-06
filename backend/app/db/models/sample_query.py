@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
 
@@ -15,7 +17,9 @@ class SampleQuery(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     connection_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("database_connections.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("database_connections.id", ondelete="CASCADE"),
+        nullable=False,
     )
     natural_language: Mapped[str] = mapped_column(Text, nullable=False)
     sql_query: Mapped[str] = mapped_column(Text, nullable=False)
@@ -24,9 +28,7 @@ class SampleQuery(Base):
     is_validated: Mapped[bool] = mapped_column(Boolean, default=False)
     question_embedding = mapped_column(Vector(settings.embedding_dimension), nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(255))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -39,4 +41,3 @@ class SampleQuery(Base):
 
 def node13(state):
     pass
-

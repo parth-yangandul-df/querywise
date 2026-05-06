@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://querywise:querywise_dev@localhost:5432/querywise"
 
     # Security
-    encryption_key: str = "dev-encryption-key-change-in-production"
+    encryption_key: str
     cors_origins: list[str] = [
         "http://localhost:5173",
         "http://localhost:5174",
@@ -59,16 +59,24 @@ class Settings(BaseSettings):
 
     # OpenRouter settings (used when default_llm_provider = "openrouter")
     openrouter_api_key: str = ""
-    openrouter_model: str = "openai/gpt-3.5-turbo"
+    openrouter_model: str = "deepseek/deepseek-v3.2"
 
     # Groq settings (used when default_llm_provider = "groq")
     groq_api_key: str = ""
-    groq_model: str = "meta-llama/llama-3.1-70b-versatile"  # Upgraded from kimi-k2 for better tool calling
+    groq_model: str = (
+        "meta-llama/llama-3.1-70b-versatile"  # Upgraded from kimi-k2 for better tool calling
+    )
+
+    # Interpreter model (used for result-to-natural-language conversion across all providers)
+    interpreter_model: str = "meta-llama/llama-3.1-8b-instruct"
 
     # Embedding provider override (leave empty to auto-derive from default_llm_provider)
     # Set to "ollama" to use Ollama for embeddings while using a different provider for LLM.
     # Valid values: "", "openai", "ollama", "anthropic"
-    embedding_provider: str
+    embedding_provider: str = ""
+
+    # Auto-setup sample DB (only enable in development/demo)
+    auto_setup_sample_db: bool = False
 
     # Rate limiting
     max_queries_per_minute: int = 30
@@ -78,20 +86,16 @@ class Settings(BaseSettings):
     max_sample_queries: int = 3
     embedding_dimension: int = 1536
 
-    # QueryPlan compiler feature flag (Phase 7)
-    use_query_plan_compiler: bool   # MIGRATION FLAG: remove after phase validation
-
-    # Groq unified intent + filter extractor (replaces embedding classifier + regex filter_extractor)
-    use_groq_extractor: bool = False  # Enable via USE_GROQ_EXTRACTOR=true in .env
-
-    # Hybrid Mode (Phase 8) — context-aware query system with deterministic override
-    use_hybrid_mode: bool = False  # Enable via USE_HYBRID_MODE=true in .env
-
     # Logging
     log_level: str = "INFO"
     log_file_enabled: bool = True
     log_rotation: str = "10 MB"
     log_retention: str = "10 days"
+
+    # LangSmith observability
+    langsmith_api_key: str = ""
+    langsmith_project: str = "querywise"
+    langsmith_tracing_enabled: bool = False
 
 
 settings = Settings()

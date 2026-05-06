@@ -1,14 +1,14 @@
 """LLM Router — routes queries to different providers/models by complexity."""
 
 import re
-from enum import Enum
+from enum import StrEnum
 
 from app.config import settings
 from app.llm.base_provider import BaseLLMProvider, LLMConfig
 from app.llm.provider_registry import get_provider
 
 
-class QueryComplexity(str, Enum):
+class QueryComplexity(StrEnum):
     SIMPLE = "simple"
     MODERATE = "moderate"
     COMPLEX = "complex"
@@ -28,17 +28,17 @@ def _build_default_routes() -> dict[QueryComplexity, dict]:
         QueryComplexity.SIMPLE: {
             "provider": provider,
             "model": model,
-            "max_tokens": 512,
+            "max_tokens": 1024,
         },
         QueryComplexity.MODERATE: {
             "provider": provider,
             "model": model,
-            "max_tokens": 768,
+            "max_tokens": 1536,
         },
         QueryComplexity.COMPLEX: {
             "provider": provider,
             "model": model,
-            "max_tokens": 1024,
+            "max_tokens": 2048,
         },
     }
 
@@ -54,21 +54,44 @@ def estimate_complexity(question: str) -> QueryComplexity:
     q_lower = question.lower()
 
     complex_signals = [
-        r"\bcompare\b", r"\btrend\b", r"\bover time\b", r"\bcorrelat",
-        r"\bpercentile\b", r"\brank\b", r"\bwindow\b", r"\brunning\b",
-        r"\bcumulative\b", r"\byear.over.year\b", r"\bmonth.over.month\b",
-        r"\bpivot\b", r"\bcohort\b", r"\bretention\b", r"\bforecast\b",
+        r"\bcompare\b",
+        r"\btrend\b",
+        r"\bover time\b",
+        r"\bcorrelat",
+        r"\bpercentile\b",
+        r"\brank\b",
+        r"\bwindow\b",
+        r"\brunning\b",
+        r"\bcumulative\b",
+        r"\byear.over.year\b",
+        r"\bmonth.over.month\b",
+        r"\bpivot\b",
+        r"\bcohort\b",
+        r"\bretention\b",
+        r"\bforecast\b",
     ]
     for pattern in complex_signals:
         if re.search(pattern, q_lower):
             return QueryComplexity.COMPLEX
 
     moderate_signals = [
-        r"\bgroup\b", r"\btotal\b", r"\baverage\b", r"\bsum\b",
-        r"\bcount\b", r"\bper\b", r"\bby\b.*\bby\b",  # "by X by Y" = multi-dimension
-        r"\bjoin\b", r"\bcombine\b", r"\bwith their\b",
-        r"\btop \d+\b", r"\bbottom \d+\b", r"\bmost\b", r"\bleast\b",
-        r"\bfilter\b", r"\bwhere\b", r"\bhaving\b",
+        r"\bgroup\b",
+        r"\btotal\b",
+        r"\baverage\b",
+        r"\bsum\b",
+        r"\bcount\b",
+        r"\bper\b",
+        r"\bby\b.*\bby\b",  # "by X by Y" = multi-dimension
+        r"\bjoin\b",
+        r"\bcombine\b",
+        r"\bwith their\b",
+        r"\btop \d+\b",
+        r"\bbottom \d+\b",
+        r"\bmost\b",
+        r"\bleast\b",
+        r"\bfilter\b",
+        r"\bwhere\b",
+        r"\bhaving\b",
     ]
     moderate_count = sum(1 for p in moderate_signals if re.search(p, q_lower))
     if moderate_count >= 2:
@@ -98,3 +121,29 @@ def route(
     )
 
     return provider, config
+
+
+def route_for_role(
+    question: str,
+    role: str = "composer",
+    routes: dict | None = None,
+) -> tuple[BaseLLMProvider, LLMConfig]:
+    """Route a question to the appropriate LLM based on the role.
+
+    Roles:
+    - "composer": default behavior — routes by complexity (existing route() logic).
+    - "interpreter": uses settings.interpreter_model for result-to-NL conversion.
+
+    Future roles (e.g. "summarizer", "validator") can be added here.
+    """
+    if role == "interpreter":
+        provider = get_provider(settings.default_llm_provider)
+        config = LLMConfig(
+            model=settings.interpreter_model,
+            temperature=0.0,
+            max_tokens=512,
+        )
+        return provider, config
+
+    # All other roles fall through to default complexity-based routing
+    return route(question, routes)

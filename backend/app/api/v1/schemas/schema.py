@@ -31,11 +31,23 @@ class ColumnResponse(BaseModel):
 
 
 class RelationshipResponse(BaseModel):
+    id: UUID | None = None
     constraint_name: str | None
     source_table: str
     source_column: str
     target_table: str
     target_column: str
+    is_manual: bool = False
+    relationship_type: str | None = None
+
+
+class RelationshipCreate(BaseModel):
+    source_table: str
+    source_column: str
+    target_table: str
+    target_column: str
+    constraint_name: str | None = None
+    relationship_type: str | None = None
 
 
 class TableDetailResponse(BaseModel):
@@ -64,5 +76,6 @@ class AvailableTableEntry(BaseModel):
     Represents a dbo table that has passed auto-exclusion rules and is
     eligible to be added to the connection's whitelist.
     """
+
     schema_name: str
     table_name: str

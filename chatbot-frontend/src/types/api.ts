@@ -20,6 +20,10 @@ export interface ChatSessionMessage {
   execution_time_ms: number | null
   retry_count: number
   result_summary: string | null
+  turn_type: string
+  clarification_reason?: string | null
+  result_columns?: string[] | null
+  result_preview_rows?: unknown[][] | null
   is_favorite: boolean
   created_at: string
 }
@@ -76,34 +80,27 @@ export interface Column {
   ordinal_position: number
 }
 
-export interface TurnContext {
-  intent: string
-  domain: string
-  params: Record<string, unknown>
-  columns: string[]
-  sql: string
-}
-
 export interface QueryResult {
   id: string
   question: string
-  generated_sql: string
-  final_sql: string
-  explanation: string
+  generated_sql: string | null
+  final_sql: string | null
+  explanation: string | null
   columns: string[]
   column_types: string[]
   rows: unknown[][]
   row_count: number
-  execution_time_ms: number
+  execution_time_ms: number | null
   truncated: boolean
   summary: string | null
   highlights: string[]
   suggested_followups: string[]
-  llm_provider: string
-  llm_model: string
+  llm_provider: string | null
+  llm_model: string | null
   retry_count: number
-  turn_context: TurnContext | null
-  topic_switch_detected: boolean
+  turn_type: string
+  clarification_message: string | null
+  clarification_options: string[]
 }
 
 export interface QueryHistory {

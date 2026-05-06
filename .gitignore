@@ -93,3 +93,9 @@ graphify-out
 .planning/
 .truecourse/
 opencode.json
+
+test_connection.ipynb
+github-pr.md
+
+# Chatbot Frontend (kept locally, not in repo)
+chatbot-frontend/

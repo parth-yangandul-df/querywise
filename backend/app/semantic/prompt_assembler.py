@@ -49,14 +49,6 @@ def assemble_prompt(
 
         sections.append("\n".join(schema_lines))
 
-        # Column name quick-reference index — one line per table so the LLM can
-        # verify exact column names without re-scanning the full schema above.
-        index_lines = ["\n=== COLUMN NAME INDEX (use these exact names, no abbreviations) ==="]
-        for lt in tables:
-            col_names = ", ".join(col.column_name for col in lt.columns)
-            index_lines.append(f"  {lt.table.table_name}: {col_names}")
-        sections.append("\n".join(index_lines))
-
     # Declared FK relationships section
     if relationships:
         rel_lines = ["\n=== RELATIONSHIPS (declared foreign keys) ==="]
@@ -69,7 +61,9 @@ def assemble_prompt(
 
     # Inferred relationships section — curated join rules for schemas with sparse FKs
     if inferred_relationships:
-        infer_lines = ["\n=== INFERRED RELATIONSHIPS (use these joins — not declared as FK but confirmed correct) ==="]
+        infer_lines = [
+            "\n=== INFERRED RELATIONSHIPS (use these joins — not declared as FK but confirmed correct) ==="
+        ]
         infer_lines.append(
             "These join paths are confirmed business rules. "
             "Always prefer these over guessing an alternative join."
@@ -110,9 +104,7 @@ def assemble_prompt(
     # Business knowledge section
     if knowledge:
         knowledge_lines = ["\n=== BUSINESS KNOWLEDGE ==="]
-        knowledge_lines.append(
-            "Relevant documentation excerpts:"
-        )
+        knowledge_lines.append("Relevant documentation excerpts:")
         for k in knowledge:
             source = k.title
             if k.source_url:
@@ -149,21 +141,29 @@ def assemble_prompt(
     constraint_lines.append("- Never use INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE")
     constraint_lines.append("- Use explicit column names, not SELECT *")
     constraint_lines.append(
-        "- COLUMN NAMES: copy every column name verbatim from the COLUMN NAME INDEX above. "
+        "- COLUMN NAMES: copy every column name verbatim from the DATABASE SCHEMA above. "
         "Never shorten, guess, or invent column names. "
         "E.g. write BusinessUnitName not Name, ClientName not Name, ResourceName not Name."
     )
 
     if dialect == "sqlserver":
-        constraint_lines.append("- Use SELECT TOP N to limit rows, NOT LIMIT (T-SQL has no LIMIT clause)")
-        constraint_lines.append("- Quote identifiers with [square brackets], e.g. [column_name], [table_name]")
+        constraint_lines.append(
+            "- Use SELECT TOP N to limit rows, NOT LIMIT (T-SQL has no LIMIT clause)"
+        )
+        constraint_lines.append(
+            "- Quote identifiers with [square brackets], e.g. [column_name], [table_name]"
+        )
         constraint_lines.append("- Use GETDATE() for current timestamp, not NOW()")
         constraint_lines.append("- Use LEN() for string length, not LENGTH()")
         constraint_lines.append("- Use ISNULL(expr, default) or COALESCE() for null handling")
         constraint_lines.append("- Use + for string concatenation, not ||")
         constraint_lines.append("- Do NOT use RETURNING clause (PostgreSQL-only)")
-        constraint_lines.append("- Do NOT use EXTRACT() — use YEAR(), MONTH(), DAY() functions instead")
-        constraint_lines.append("- Default row limit: SELECT TOP 1000 unless user specifies otherwise")
+        constraint_lines.append(
+            "- Do NOT use EXTRACT() — use YEAR(), MONTH(), DAY() functions instead"
+        )
+        constraint_lines.append(
+            "- Default row limit: SELECT TOP 1000 unless user specifies otherwise"
+        )
         if inferred_relationships:
             constraint_lines.append(
                 "- JOIN RULES: Always use the join paths listed in INFERRED RELATIONSHIPS above. "
@@ -175,4 +175,3 @@ def assemble_prompt(
     sections.append("\n".join(constraint_lines))
 
     return "\n".join(sections)
-    

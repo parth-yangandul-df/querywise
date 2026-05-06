@@ -2,23 +2,23 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_plan: 08-06 complete
-status: phase_complete
-stopped_at: Phase 08 complete
-last_updated: "2026-04-07T00:00:00.000Z"
+current_plan: 09 not started
+status: planned
+stopped_at: Phase 09 planned
+last_updated: "2026-04-28T00:00:00.000Z"
 progress:
-  total_phases: 6
-  completed_phases: 4
-  total_plans: 25
+  total_phases: 7
+  completed_phases: 5
+  total_plans: 35
   completed_plans: 20
 ---
 
 # QueryWise Project State
 
-**Current State:** Phase 08 in progress — Context-Aware Hybrid AI Query System
-**Last Updated:** 2026-04-07
-**Phase Focus:** Phase 8 — Context-Aware Hybrid AI Query System
-**Current Plan:** 08-01 complete
+**Current State:** Phase 09 planned — Query Engine Refactor
+**Last Updated:** 2026-04-28
+**Phase Focus:** Phase 9 — Query Engine Refactor
+**Current Plan:** Not started
 
 ## Project Architecture
 
@@ -33,6 +33,9 @@ QueryWise is a text-to-SQL application with semantic metadata layer. Users ask n
 
 ### Current Request Flow
 User → FastAPI → LangGraph pipeline → classify_intent → extract_filters → update_query_plan → [domain tool | llm_fallback] → interpret_result → write_history → Response
+
+### Target Architecture (Phase 9)
+User → FastAPI → Conversation Resolver → Query Planner → **Plan Validator** → Capability Matcher → Strategy Selector → [Template Executor | Generation Executor] → Execution Guard → Result Narrator → State Store → Response
 
 ## Decisions Made
 
@@ -76,6 +79,18 @@ User → FastAPI → LangGraph pipeline → classify_intent → extract_filters 
 ### Phase 08 Decisions (2026-04-07)
 - [GraphState Extension]: Added hybrid mode fields (last_query, embeddings, follow_up_type, confidence_breakdown) — follows Phase 7 pattern of storing as dict
 - [Follow-up Detection]: Implemented cosine similarity + intent mismatch + same-field detection; threshold 0.7 for "refine" classification
+
+### Phase 9 Decisions (2026-04-28)
+- [Architecture]: Single canonical pipeline replaces patch-driven layering — Conversation Resolver → Query Planner → **Plan Validator** → Capability Matcher → Strategy Selector → Executor → Result Narrator → State Store
+- [Plan Validator]: NEW stage validates per-filter confidence (0.0-1.0), resolves entities against known metadata (clients, projects, skills, statuses), detects contradictions with prior state, applies clarification policy
+- [Catalog Model]: Predefined SQL promoted from brittle domain agent FAQ-matching to formal Capability Catalog with structured metadata (intent_id, domain, filters, grouping, metrics, parameter binding rules)
+- [Generation as Fallback]: LLM SQL generation is a formal fallback strategy (not equal peer) behind Generation Executor — only invoked when Strategy Selector cannot satisfy via template
+- [State Persistence]: Ad hoc turn context replaced with durable Postgres-backed conversation state via LangGraph checkpointer
+- [LangGraph Scope]: LangGraph retained only for thread lifecycle, clarification loops, checkpointing — business query logic moves to `query_engine/` package
+- [Execution Guards]: RBAC, timeout, read-only, row limits, SQL validation centralized in one Execution Guard layer shared by both template and generation paths
+- [Strategy Selector]: Deterministic routing: reject → clarify → template → generate — no parallel routing systems
+- [Retrieval Split]: Lightweight retrieval for template path, heavyweight (semantic) retrieval only for generation path
+- [Package Layout]: New `backend/app/query_engine/` replaces `backend/app/llm/graph/`
 
 ### Phase 06 Post-Execution Decisions (2026-04-02)
 - [Refinement Registry]: 61 declarative refinement templates across 5 domains (resource, client, project, timesheet, user_self) covering skill, name, date range, status, numeric, boolean, text filter types
@@ -173,6 +188,21 @@ User → FastAPI → LangGraph pipeline → classify_intent → extract_filters 
 | 08-04 | 6-Level Fallback Ladder + Context Recovery | ✅ Complete (2026-04-07) |
 | 08-05 | Query Caching + Observability | ✅ Complete (2026-04-07) |
 | 08-06 | Semantic Integration + E2E Pipeline | ✅ Complete (2026-04-07) |
+
+## Phase 9 Progress
+
+| Plan | Description | Status |
+|------|-------------|--------|
+| 09-01 | Core Contracts + Config Cleanup (sub-phases 1–2) | Not started |
+| 09-02 | Capability Catalog Extraction (sub-phase 3) | Not started |
+| 09-03 | Planner Implementation (sub-phase 4) | Not started |
+| 09-04 | Capability Matcher + Strategy Selector (sub-phases 5–6) | Not started |
+| 09-05 | Template Executor + Generation Executor (sub-phases 7–8) | Not started |
+| 09-06 | Execution Guardrail Layer (sub-phase 9) | Not started |
+| 09-07 | Conversation State System + Session Ownership (sub-phases 10–11) | Not started |
+| 09-08 | Query Service Rewrite + API Layer Update (sub-phases 12–13) | Not started |
+| 09-09 | Retrieval Split + Observability (sub-phases 14–15) | Not started |
+| 09-10 | Legacy Retirement (sub-phase 16) | Not started |
 
 ## Accumulated Context
 

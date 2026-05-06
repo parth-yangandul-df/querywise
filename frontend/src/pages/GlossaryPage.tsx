@@ -20,7 +20,7 @@ import {
 } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
-import { IconPlus, IconTrash, IconEdit, IconUpload } from '@tabler/icons-react';
+import { IconPlus, IconTrash, IconEdit, IconUpload, IconSearch } from '@tabler/icons-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { glossaryApi } from '../api/glossaryApi';
 import { useConnections } from '../hooks/useConnections';
@@ -34,15 +34,20 @@ export function GlossaryPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [editingTerm, setEditingTerm] = useState<GlossaryTerm | null>(null);
   const [csvOpen, setCsvOpen] = useState(false);
+  const [search, setSearch] = useState('');
 
   const { data: connections } = useConnections();
   const qc = useQueryClient();
 
   const connOptions =
     connections?.map((c) => ({ value: c.id, label: c.name })) ?? [];
-  if (!connectionId && connOptions.length > 0) {
-    setConnectionId(connOptions[0].value);
-  }
+
+  useEffect(() => {
+    if (!connectionId && connOptions.length > 0) {
+      setConnectionId(connOptions[0].value);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connections]);
 
   const { data: terms, isLoading } = useQuery({
     queryKey: ['glossary', connectionId],
@@ -50,7 +55,16 @@ export function GlossaryPage() {
     enabled: !!connectionId,
   });
 
-  const { page, setPage, totalPages, total, paged, pageSize } = usePagination(terms);
+  const filteredTerms = terms?.filter((t) => {
+    const q = search.toLowerCase();
+    return (
+      t.term.toLowerCase().includes(q) ||
+      t.definition.toLowerCase().includes(q) ||
+      (t.sql_expression ?? '').toLowerCase().includes(q)
+    );
+  });
+
+  const { page, setPage, totalPages, total, paged, pageSize } = usePagination(filteredTerms);
 
   const deleteMutation = useMutation({
     mutationFn: ({ connId, termId }: { connId: string; termId: string }) =>
@@ -82,13 +96,23 @@ export function GlossaryPage() {
         </Group>
       </Group>
 
-      <Select
-        label="Connection"
-        data={connOptions}
-        value={connectionId}
-        onChange={setConnectionId}
-        w={300}
-      />
+      <Group>
+        <Select
+          label="Connection"
+          data={connOptions}
+          value={connectionId}
+          onChange={setConnectionId}
+          w={300}
+        />
+        <TextInput
+          label="Search"
+          placeholder="Search terms..."
+          leftSection={<IconSearch size={14} />}
+          value={search}
+          onChange={(e) => { setSearch(e.currentTarget.value); setPage(1); }}
+          w={300}
+        />
+      </Group>
 
       {isLoading && (
         <Group justify="center" py="xl">

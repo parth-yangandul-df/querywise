@@ -3,6 +3,7 @@ import hashlib
 import uuid
 
 from cryptography.fernet import Fernet
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -114,7 +115,8 @@ async def test_connection(db: AsyncSession, connection_id: uuid.UUID) -> tuple[b
         success = await connector.test_connection()
         return (success, "Connection successful" if success else "Connection test failed")
     except Exception as e:
-        return (False, str(e))
+        logger.error("Connection test failed for {}: {}", connection_id, e)
+        return (False, "Connection test failed. Check host, port, and credentials.")
 
 
 def get_decrypted_connection_string(conn: DatabaseConnection) -> str:

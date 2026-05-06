@@ -24,7 +24,6 @@ from app.semantic.relevance_scorer import (
 )
 from app.semantic.schema_linker import LinkedTable, _detect_anchor_tables
 
-
 # ---------------------------------------------------------------------------
 # Helpers: extract_keywords
 # ---------------------------------------------------------------------------
@@ -148,7 +147,9 @@ class TestAnchorTableSignals:
         assert "Project" in result
 
     def test_resource_keyword_maps_to_resource_table(self):
-        result = _detect_anchor_tables("active resources by department", ["active", "resources", "resource"])
+        result = _detect_anchor_tables(
+            "active resources by department", ["active", "resources", "resource"]
+        )
         assert "Resource" in result
 
     def test_manager_maps_to_resource_table(self):
@@ -160,12 +161,16 @@ class TestAnchorTableSignals:
         assert "Resource" in result
 
     def test_status_maps_to_status_table(self):
-        result = _detect_anchor_tables("clients with active status", ["clients", "active", "status"])
+        result = _detect_anchor_tables(
+            "clients with active status", ["clients", "active", "status"]
+        )
         assert "Status" in result
 
     def test_direct_report_multi_word_signal(self):
         """'direct report' is a multi-word signal matched against the full question."""
-        result = _detect_anchor_tables("who are the direct reports of this manager", ["direct", "reports", "manager"])
+        result = _detect_anchor_tables(
+            "who are the direct reports of this manager", ["direct", "reports", "manager"]
+        )
         assert "Resource" in result
 
     def test_unrelated_question_returns_empty(self):
@@ -174,11 +179,23 @@ class TestAnchorTableSignals:
 
     def test_no_duplicate_tables_in_result(self):
         """'manager' and 'resource' both map to Resource — should appear once."""
-        result = _detect_anchor_tables("list all resources and their managers", ["resources", "resource", "managers", "manager"])
+        result = _detect_anchor_tables(
+            "list all resources and their managers",
+            ["resources", "resource", "managers", "manager"],
+        )
         assert result.count("Resource") == 1
 
     def test_anchor_signals_dict_has_expected_keys(self):
-        expected_keys = {"client", "project", "resource", "employee", "status", "manager", "reporting", "direct report"}
+        expected_keys = {
+            "client",
+            "project",
+            "resource",
+            "employee",
+            "status",
+            "manager",
+            "reporting",
+            "direct report",
+        }
         assert expected_keys.issubset(set(ANCHOR_TABLE_SIGNALS.keys()))
 
 
@@ -315,9 +332,7 @@ class TestFindRelevantTablesAsync:
         assert "Client" in table_names
 
     @pytest.mark.asyncio
-    async def test_anchor_forcing_injects_status_for_status_keyword(
-        self, conn_id, status_table
-    ):
+    async def test_anchor_forcing_injects_status_for_status_keyword(self, conn_id, status_table):
         """When 'status' appears in the question, Status table must be injected."""
         from app.semantic.schema_linker import find_relevant_tables
 
@@ -344,9 +359,7 @@ class TestFindRelevantTablesAsync:
         assert "Status" in table_names
 
     @pytest.mark.asyncio
-    async def test_column_keyword_hit_returns_table(
-        self, conn_id, client_table
-    ):
+    async def test_column_keyword_hit_returns_table(self, conn_id, client_table):
         """A table whose column name matches a keyword should be selected."""
         from app.semantic.schema_linker import find_relevant_tables
 
@@ -388,7 +401,9 @@ class TestFindRelevantTablesAsync:
         assert all(isinstance(r, LinkedTable) for r in results)
 
     @pytest.mark.asyncio
-    async def test_max_tables_limits_output(self, conn_id, client_table, project_table, resource_table):
+    async def test_max_tables_limits_output(
+        self, conn_id, client_table, project_table, resource_table
+    ):
         from app.semantic.schema_linker import find_relevant_tables
 
         session = self._build_session(

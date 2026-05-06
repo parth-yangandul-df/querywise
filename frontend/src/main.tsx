@@ -10,7 +10,12 @@ import App from './App';
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: 1, staleTime: 30_000 },
+    queries: {
+      retry: 1,
+      staleTime: 300_000, // 5 minutes instead of 30 seconds
+      refetchOnWindowFocus: false, // Don't refetch when window gains focus
+      refetchOnMount: false, // Don't refetch when component mounts
+    },
   },
 });
 

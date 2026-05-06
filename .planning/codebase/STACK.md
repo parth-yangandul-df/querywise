@@ -1,108 +1,118 @@
-# Technology Stack
+# QueryWise Technology Stack
 
-**Analysis Date:** 2026-04-07
+## Programming Languages
 
-## Languages
+- **Python 3.11+** — Backend API, LLM integrations, database operations
+- **TypeScript** — Frontend applications
+- **JavaScript** — Frontend build tooling
 
-**Primary:**
-- Python 3.11+ - Backend API, LLM integrations, database operations
-- TypeScript - Frontend (both frontend and chatbot-frontend)
+## Backend
 
-**Secondary:**
-- JavaScript - Minimal (TypeScript dominant)
+### Frameworks
+- **FastAPI** — Web framework (async, type hints, OpenAPI generation)
+- **Uvicorn** — ASGI server
+- **SQLAlchemy 2.0+** — ORM (async mode)
+- **Alembic** — Database migrations
+- **LangGraph** — Stateful graph for LLM agent orchestration
 
-## Runtime
+### Key Libraries
+- **asyncpg** — Async PostgreSQL driver
+- **pgvector** — Vector similarity search for embeddings
+- **httpx** — Async HTTP client
+- **pydantic** — Data validation
+- **pydantic-settings** — Settings management
+- **tenacity** — Retry logic
+- **loguru** — Structured logging
+- **prometheus-fastapi-instrumentator** — Metrics
+- **PyJWT** — JWT authentication
+- **passlib/bcrypt** — Password hashing
+- **sqlparse** — SQL parsing/sanitization
+- **sse-starlette** — Server-sent events for streaming
 
-**Environment:**
-- Python: 3.11+ via uvicorn ASGI server
-- Node.js: 19+ via Vite for frontend bundling
+### LLM Libraries
+- **anthropic** — Anthropic API client
+- **openai** — OpenAI API client
+- **langchain-core** — LangChain abstractions
 
-**Package Manager:**
-- Python: pip via pyproject.toml (PEP 517)
-- Node.js: npm via package.json
+### Database Connectors
+- **PostgreSQL** — via asyncpg (connection pooling)
+- **SQL Server** — via aioodbc (lazy-loaded, optional)
 
-**Lockfiles:**
-- Python: Not present (uses pip directly)
-- Node.js: `package-lock.json` in frontend and chatbot-frontend
+### Optional Dependencies
+- **aioodbc** — SQL Server connector (requires pyodbc)
 
-## Frameworks
+### Development Tools
+- **pytest** — Testing
+- **pytest-asyncio** — Async test support
+- **ruff** — Linting (E, F, I, N, UP, B rules)
+- **mypy** — Type checking
 
-**Core (Backend):**
-- FastAPI 0.115+ - Web framework with Pydantic validation
-- SQLAlchemy 2.0+ (async) - ORM with asyncpg driver
-- pgvector 0.3+ - Vector embeddings for semantic search
-- Alembic - Database migrations
-- LangGraph 0.2+ - LLM agent orchestration (optional, via `[llm]` extra)
+## Frontend (Mantine UI)
 
-**Core (Frontend):**
-- React 19 - UI framework (both frontend and chatbot-frontend)
-- Vite 7/8 - Build tool and dev server
+### Framework
+- **React 19** — UI library
+- **Vite** — Build tool
+- **TypeScript** — Type safety
+- **React Router** — Routing
 
-**Frontend UI Libraries:**
-- Mantine UI 8.3+ - Primary frontend (port 5173)
-- Tailwind CSS 3.4+ - Chatbot frontend (port 5174)
-- shadcn/ui (Radix primitives) - Chatbot UI components
+### UI Libraries
+- **@mantine/core** — Component library
+- **@mantine/form** — Form handling
+- **@mantine/notifications** — Notifications
+- **@mantine/code-highlight** — SQL syntax highlighting
+- **@tabler/icons-react** — Icons
+- **@monaco-editor/react** — SQL editor
 
-**Frontend State/Data:**
-- React Query (TanStack) 5.90+ - Server state management
-- React Router 7 - Navigation
+### Data Fetching
+- **@tanstack/react-query** — Server state management
+- **axios** — HTTP client
 
-**Testing:**
-- pytest 8.0+ - Backend test runner
-- pytest-asyncio 0.24+ - Async test support
-- ESLint + TypeScript ESLint - Frontend linting
+## Chatbot Frontend (shadcn/ui + Tailwind)
 
-**Code Quality:**
-- Ruff 0.8+ - Python linting and formatting
-- mypy 1.13+ - Python type checking
+### Framework
+- **React 19** — UI library
+- **Vite** — Build tool
+- **TypeScript** — Type safety
+- **React Router** — Routing
+- **Tailwind CSS** — Styling
 
-## Key Dependencies
+### UI Components
+- **shadcn/ui** — Radix UI primitives with Tailwind
+- **@radix-ui/** — Headless UI components
+- **lucide-react** — Icons
+- **framer-motion** — Animations
+- **clsx / tailwind-merge** — Class utilities
 
-**Critical:**
-- asyncpg 0.30+ - Async PostgreSQL driver
-- pydantic 2.0+ - Data validation
-- pydantic-settings 2.0+ - Environment configuration
-- httpx 0.27+ - Async HTTP client (LLM calls, URL fetching)
-- cryptography 43.0+ - Connection string encryption
-- loguru 0.7+ - Structured logging
+### Data Fetching
+- **@tanstack/react-query** — Server state management
+- **axios** — HTTP client
 
-**LLM (optional via `[llm]` extra):**
-- anthropic 0.40+ - Claude API client
-- openai 1.50+ - OpenAI API client
-- langgraph 0.2+ - Agent state management
+## Databases
 
-**Database Connectors (optional via `[sqlserver]` extra):**
-- aioodbc 0.5+ - Async ODBC driver for SQL Server
+### Application Database (pgvector)
+- **PostgreSQL 16** with **pgvector** extension
+- Stores: metadata, glossary terms, embeddings, query history, knowledge documents
+- Default port: 5432
 
-**Authentication:**
-- PyJWT 2.8+ - JWT token handling
-- passlib[bcrypt] 1.7+ - Password hashing
+### Target Databases (User Connections)
+- **PostgreSQL** — Via built-in connector
+- **SQL Server** — Via optional aioodbc connector
 
-## Configuration
+## Infrastructure
 
-**Environment:**
-- `.env` file at project root (backend reads from workspace root)
-- Configuration class: `backend/app/config.py` with `Settings(BaseSettings)`
-- Loads from `.env` files via `pydantic-settings`
+### Docker Services
+- **app-db** — PostgreSQL + pgvector (pgvector/pgvector:pg16)
+- **backend** — FastAPI application
+- **frontend** — Mantine UI (port 5173)
+- **chatbot-frontend** — React + Tailwind (port 5174)
+- **ollama** — Optional local LLM (Docker profile)
+- **pgadmin** — PostgreSQL admin UI (Docker profile, port 5050)
 
-**Build:**
-- Backend: `pyproject.toml` (Ruff, pytest config)
-- Frontend: `vite.config.ts`, `tsconfig.json`
-- Chatbot-frontend: `vite.config.ts`, `tsconfig.json`
+## Environment Configuration
 
-## Platform Requirements
-
-**Development:**
-- Docker + Docker Compose for full stack
-- PostgreSQL 16 with pgvector extension
-- Node.js 19+
-- Python 3.11+
-
-**Production:**
-- FastAPI ASGI server (uvicorn)
-- PostgreSQL 16 with pgvector
-- LLM provider API keys (Anthropic, OpenAI, Ollama, OpenRouter, or Groq)
-
----
-
-*Stack analysis: 2026-04-07*
+### Key Variables
+- `DATABASE_URL` — App metadata DB connection
+- `ENCRYPTION_KEY` — Fernet key for connection string encryption
+- `DEFAULT_LLM_PROVIDER` — LLM provider selection
+- `EMBEDDING_DIMENSION` — Vector size (1536 for OpenAI, 768 for Ollama)
+- `CORS_ORIGINS` — Allowed origins

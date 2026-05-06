@@ -32,7 +32,7 @@ def upgrade() -> None:
             JSONB,
             nullable=True,
             comment="Whitelist of exact 'schema.table' names to include during introspection. "
-                    "Null or empty list means no whitelist filter. SQL Server only.",
+            "Null or empty list means no whitelist filter. SQL Server only.",
         ),
     )
 

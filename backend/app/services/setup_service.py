@@ -867,7 +867,6 @@ async def _generate_embeddings_background(connection_id: uuid.UUID) -> None:
     """Run embedding generation in the background with progress tracking."""
     from app.services.embedding_progress import (
         increment,
-        mark_completed,
         mark_failed,
         start_tracking,
     )
@@ -892,7 +891,6 @@ async def _generate_embeddings_background(connection_id: uuid.UUID) -> None:
             )
             await db.commit()
 
-            mark_completed(cid)
             logger.info("Background embeddings: done (%d generated)", count)
         except Exception as e:
             await db.rollback()

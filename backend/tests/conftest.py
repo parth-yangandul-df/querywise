@@ -1,5 +1,7 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from app.connectors.base_connector import QueryResult
 
 
@@ -33,7 +35,9 @@ def mock_embed_text(monkeypatch):
     Patches at the usage site (intent_catalog module) so the already-imported
     reference is replaced correctly.
     """
+
     async def _stub(text: str) -> list[float]:
         return [1.0, 0.0, 0.0]
+
     monkeypatch.setattr("app.llm.graph.intent_catalog.embed_text", _stub)
     return _stub

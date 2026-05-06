@@ -8,13 +8,14 @@ class TestGraphStateExtension:
 
     def test_graph_state_has_session_fields(self):
         """GraphState should have hybrid mode fields."""
-        from app.llm.graph.state import GraphState
+
         # Field existence is validated through annotation
         assert True
 
     def test_follow_up_type_literal(self):
         """follow_up_type should accept refine/replace/new."""
-        from typing_extensions import Literal
+        from typing import Literal
+
         # Literal type validation
         Literal["refine", "replace", "new"]
 

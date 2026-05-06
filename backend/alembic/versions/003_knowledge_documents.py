@@ -9,18 +9,19 @@ external documentation (e.g. Confluence pages) into the semantic layer.
 """
 
 import os
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import UUID
 
+from alembic import op
+
 # revision identifiers, used by Alembic.
 revision: str = "003"
 down_revision: str = "002"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIMENSION", "1536"))
 
@@ -63,9 +64,7 @@ def upgrade() -> None:
         sa.Column("chunk_index", sa.Integer, nullable=False),
         sa.Column("content", sa.Text, nullable=False),
         sa.Column("content_hash", sa.String(64), nullable=True),
-        sa.Column(
-            "chunk_embedding", Vector(EMBEDDING_DIM), nullable=True
-        ),
+        sa.Column("chunk_embedding", Vector(EMBEDDING_DIM), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),

@@ -17,7 +17,7 @@ docker compose up
 | Service | URL |
 |---|---|
 | Frontend (admin) | http://localhost:5173 |
-| Chatbot frontend | http://localhost:5174 |
+| Angular Chat | http://localhost:4200 |
 | Backend API | http://localhost:8000 |
 | API docs (Swagger) | http://localhost:8000/docs |
 
@@ -39,9 +39,9 @@ uvicorn app.main:app --reload
 npm install
 npm run dev
 
-# from chatbot-frontend/
+# from angular-test/
 npm install
-npm run dev
+npm run start
 ```
 
 ---
@@ -56,14 +56,14 @@ npm run dev
 | `DEFAULT_LLM_MODEL` | `claude-sonnet-4-20250514` | Default model for SQL generation and all LLM agent calls |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model (used when provider is `openai`, `anthropic`, `openrouter`, `groq`) |
 | `EMBEDDING_DIMENSION` | `1536` | Vector dimension. Must match the embedding model: OpenAI=1536, Ollama nomic-embed-text=768 |
-| `CORS_ORIGINS` | `["http://localhost:5173", "http://localhost:5174", "http://localhost:4200", "http://localhost:4000"]` | Allowed CORS origins |
+| `CORS_ORIGINS` | `["http://localhost:5173", "http://localhost:5175", "http://localhost:4200"]` | Allowed CORS origins |
 | `AUTO_SETUP_SAMPLE_DB` | `true` | Auto-create + seed IFRS 9 sample DB on startup |
 | `SAMPLE_DB_CONNECTION_STRING` | `postgresql://sample:sample_dev@sample-db:5432/sampledb` | Sample DB used by auto-setup |
 | `ANTHROPIC_API_KEY` | — | Required if `DEFAULT_LLM_PROVIDER=anthropic` |
 | `OPENAI_API_KEY` | — | Required if `DEFAULT_LLM_PROVIDER=openai`, or when any non-Ollama provider needs embeddings |
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama server URL. Use `http://ollama:11434` for Docker-in-Docker Ollama. |
 | `OLLAMA_MODEL` | `llama3.1:8b` | Ollama model for completions |
-| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Ollama model for embeddings |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Ollama model for embeddings (only when using Ollama for embeddings) |
 | `TOOL_CONFIDENCE_THRESHOLD` | `0.65` | Cosine similarity cutoff for intent classification. Below this → LLM fallback path. |
 
 ---
@@ -311,7 +311,7 @@ ruff format .            # Format
 mypy .                   # Type check (strict)
 ```
 
-### Frontend (`frontend/` and `chatbot-frontend/`)
+### Frontend (`frontend/` and `angular-test/`)
 
 ```bash
 npm run build            # Production build (tsc + vite)

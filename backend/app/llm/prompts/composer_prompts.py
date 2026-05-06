@@ -20,6 +20,20 @@ Rules:
 - If the question is ambiguous, make reasonable assumptions and state them.
 - ALWAYS follow the dialect rules in the CONSTRAINTS section — different databases use different syntax.
 
+CRITICAL — Human-readable output (violations make results uninterpretable):
+Always display descriptive name columns instead of raw ID columns whenever the schema provides them.
+If the SELECT list would return an ID column (e.g. ResourceId, ClientId, ProjectId, BusinessUnitId,
+DesignationId, etc.) and the related name column is available (via JOIN or on the same table), replace
+the ID with the name column. If the name table is not already in the query, JOIN it to get the name.
+- WRONG: SELECT e.ResourceId, SUM(e.Hrs) FROM TS_EODDetails e GROUP BY e.ResourceId
+- RIGHT: SELECT r.ResourceName, SUM(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY r.ResourceName
+- WRONG: SELECT p.ClientId, COUNT(*) FROM Project p GROUP BY p.ClientId
+- RIGHT: SELECT c.ClientName, COUNT(*) FROM Project p JOIN Client c ON p.ClientId = c.ClientId GROUP BY c.ClientName
+- WRONG: SELECT r.DesignationId FROM Resource r
+- RIGHT: SELECT d.DesignationName FROM Resource r JOIN Designation d ON r.DesignationId = d.DesignationId
+Only keep an ID column in the SELECT list if there is no corresponding name table available in the schema,
+or if the question explicitly asks for the ID.
+
 CRITICAL — Exact column naming (violations produce broken queries that fail at runtime):
 - ALWAYS use the EXACT column name as it appears in the DATABASE SCHEMA section. Copy it character-for-character.
 - NEVER abbreviate, shorten, or paraphrase column names. Concrete examples:
@@ -33,10 +47,10 @@ CRITICAL — Exact column naming (violations produce broken queries that fail at
 - The DATABASE SCHEMA section is the single source of truth for all column names. Trust nothing else.
 
 Dialect-specific rules (apply based on the SQL dialect in CONSTRAINTS):
-- postgresql: Use LIMIT N to restrict rows. Quote identifiers with double-quotes if needed.
 - sqlserver:  Use SELECT TOP N instead of LIMIT. Quote identifiers with [square brackets]. Do NOT use LIMIT. Do NOT use RETURNING. Use GETDATE() instead of NOW(). Use LEN() instead of LENGTH(). Use ISNULL() instead of COALESCE where appropriate.
-- mysql:      Use LIMIT N. Use backtick quoting. Use IFNULL() instead of COALESCE where needed.
-- snowflake:  Use LIMIT N. Use double-quote quoting. Use ILIKE for case-insensitive matching.
+- For text/name filters (e.g., ProjectName, ClientName, ResourceName), always use LIKE '%value%' for case-insensitive partial matching — never use =.
+- When filtering on "billable", "active", "current" resources or assignments, always include the date check: AND (EndDate > GETDATE() OR EndDate IS NULL).
+
 
 Output format:
 Respond with a JSON object containing:

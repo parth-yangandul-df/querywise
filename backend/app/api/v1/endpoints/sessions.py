@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
@@ -137,7 +137,7 @@ async def update_session_title(
     title = str(body.get("title", "")).strip()
     if title:
         session.title = title[:100]
-        session.updated_at = datetime.now(timezone.utc)
+        session.updated_at = datetime.now(UTC)
         await db.flush()
     return {"title": session.title}
 

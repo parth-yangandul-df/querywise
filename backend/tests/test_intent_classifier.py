@@ -1,5 +1,7 @@
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from app.llm.graph.intent_catalog import INTENT_CATALOG
 
 
@@ -38,16 +40,22 @@ def _base_state(**overrides):
 async def test_classify_intent_high_confidence():
     """When question embedding matches first catalog entry exactly, confidence=1.0."""
     from app.llm.graph.nodes.intent_classifier import classify_intent
+
     first_entry = INTENT_CATALOG[0]
     identical_embedding = [1.0, 0.0, 0.0]
     first_entry.embedding = identical_embedding
 
-    with patch("app.llm.graph.nodes.intent_classifier.embed_text",
-               AsyncMock(return_value=identical_embedding)), \
-         patch("app.llm.graph.nodes.intent_classifier.ensure_catalog_embedded",
-               AsyncMock()), \
-         patch("app.llm.graph.nodes.intent_classifier.get_catalog_embeddings",
-               return_value=[[1.0, 0.0, 0.0]] + [[0.0, 1.0, 0.0]] * 23):
+    with (
+        patch(
+            "app.llm.graph.nodes.intent_classifier.embed_text",
+            AsyncMock(return_value=identical_embedding),
+        ),
+        patch("app.llm.graph.nodes.intent_classifier.ensure_catalog_embedded", AsyncMock()),
+        patch(
+            "app.llm.graph.nodes.intent_classifier.get_catalog_embeddings",
+            return_value=[[1.0, 0.0, 0.0]] + [[0.0, 1.0, 0.0]] * 23,
+        ),
+    ):
         state = _base_state()
         updates = await classify_intent(state)
 
@@ -60,12 +68,18 @@ async def test_classify_intent_high_confidence():
 async def test_classify_intent_low_confidence_orthogonal():
     """Orthogonal embedding → confidence~0 (below threshold)."""
     from app.llm.graph.nodes.intent_classifier import classify_intent
-    with patch("app.llm.graph.nodes.intent_classifier.embed_text",
-               AsyncMock(return_value=[0.0, 0.0, 1.0])), \
-         patch("app.llm.graph.nodes.intent_classifier.ensure_catalog_embedded",
-               AsyncMock()), \
-         patch("app.llm.graph.nodes.intent_classifier.get_catalog_embeddings",
-               return_value=[[1.0, 0.0, 0.0]] * 24):
+
+    with (
+        patch(
+            "app.llm.graph.nodes.intent_classifier.embed_text",
+            AsyncMock(return_value=[0.0, 0.0, 1.0]),
+        ),
+        patch("app.llm.graph.nodes.intent_classifier.ensure_catalog_embedded", AsyncMock()),
+        patch(
+            "app.llm.graph.nodes.intent_classifier.get_catalog_embeddings",
+            return_value=[[1.0, 0.0, 0.0]] * 24,
+        ),
+    ):
         state = _base_state()
         updates = await classify_intent(state)
 
@@ -74,49 +88,24 @@ async def test_classify_intent_low_confidence_orthogonal():
 
 def test_route_after_classify_high_confidence():
     from app.llm.graph.nodes.intent_classifier import route_after_classify
+
     state = _base_state(confidence=0.95, domain="resource", intent="active_resources")
     assert route_after_classify(state) == "extract_params"
 
 
 def test_route_after_classify_low_confidence():
     from app.llm.graph.nodes.intent_classifier import route_after_classify
+
     state = _base_state(confidence=0.50, domain="resource", intent="active_resources")
     assert route_after_classify(state) == "llm_fallback"
 
 
 def test_route_after_classify_at_threshold():
     """Confidence exactly at threshold routes to extract_params."""
-    from app.llm.graph.nodes.intent_classifier import route_after_classify, _THRESHOLD
+    from app.llm.graph.nodes.intent_classifier import _THRESHOLD, route_after_classify
+
     state = _base_state(confidence=_THRESHOLD, domain="resource", intent="active_resources")
     assert route_after_classify(state) == "extract_params"
-
-
-# ── Param Extractor Tests ────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_extract_skill():
-    from app.llm.graph.nodes.param_extractor import extract_params
-    state = _base_state(question="find resources with skill Python")
-    updates = await extract_params(state)
-    assert updates["params"]["skill"] == "Python"
-
-
-@pytest.mark.asyncio
-async def test_extract_date_range():
-    from app.llm.graph.nodes.param_extractor import extract_params
-    state = _base_state(question="show timesheets from 2026-01-01 to 2026-01-31")
-    updates = await extract_params(state)
-    assert updates["params"]["start_date"] == "2026-01-01"
-    assert updates["params"]["end_date"] == "2026-01-31"
-
-
-@pytest.mark.asyncio
-async def test_extract_no_match_returns_empty():
-    from app.llm.graph.nodes.param_extractor import extract_params
-    state = _base_state(question="show active resources")
-    updates = await extract_params(state)
-    assert updates["params"] == {}
 
 
 # ── Person Name Detection Tests ───────────────────────────────────────────────
@@ -124,7 +113,7 @@ async def test_extract_no_match_returns_empty():
 
 def test_has_person_name_two_capitalized_words():
     """Two consecutive capitalized words trigger person name detection."""
-    from app.llm.graph.nodes.intent_classifier import _has_person_name
+    from app.llm.graph.nodes.classifier_keywords import _has_person_name
 
     assert _has_person_name("Show Gautham R M project assignments")
     assert _has_person_name("John Smith works on Python")
@@ -135,7 +124,7 @@ def test_has_person_name_two_capitalized_words():
 
 def test_has_person_name_single_capitalized_word():
     """Single capitalized word (like "Python" or "SQL") does NOT trigger."""
-    from app.llm.graph.nodes.intent_classifier import _has_person_name
+    from app.llm.graph.nodes.classifier_keywords import _has_person_name
 
     assert not _has_person_name("Show me my Python projects")
     assert not _has_person_name("What is my SQL timesheet")
@@ -144,7 +133,7 @@ def test_has_person_name_single_capitalized_word():
 
 def test_has_person_name_no_names():
     """Questions without person names return False."""
-    from app.llm.graph.nodes.intent_classifier import _has_person_name
+    from app.llm.graph.nodes.classifier_keywords import _has_person_name
 
     assert not _has_person_name("show active resources")
     assert not _has_person_name("what are benched developers")

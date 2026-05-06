@@ -10,16 +10,17 @@ embeddings so they regenerate with the new provider on next use.
 """
 
 import os
-from typing import Sequence, Union
+from collections.abc import Sequence
+
+from pgvector.sqlalchemy import Vector
 
 from alembic import op
-from pgvector.sqlalchemy import Vector
 
 # revision identifiers, used by Alembic.
 revision: str = "002"
 down_revision: str = "001"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 # Read target dimension from env; default stays at 1536 (OpenAI) for backwards compat
 NEW_DIM = int(os.environ.get("EMBEDDING_DIMENSION", "1536"))

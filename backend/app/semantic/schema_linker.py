@@ -4,8 +4,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import func, select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -131,7 +130,8 @@ async def find_relevant_tables(
 
     # Stage 5: Relationship expansion — boost tables connected via FK to high-scoring tables
     top_table_ids = [
-        uuid.UUID(s.id) for s in sorted(scored.values(), key=lambda s: s.final_score, reverse=True)[:5]
+        uuid.UUID(s.id)
+        for s in sorted(scored.values(), key=lambda s: s.final_score, reverse=True)[:5]
     ]
     related_tables = await _get_related_tables(db, connection_id, top_table_ids)
     for table in related_tables:
@@ -166,12 +166,14 @@ async def find_relevant_tables(
         )
         columns = list(col_result.scalars().all())
 
-        results.append(LinkedTable(
-            table=table,
-            columns=columns,
-            score=item.final_score,
-            match_reason=reason_map.get(item.id, "embedding"),
-        ))
+        results.append(
+            LinkedTable(
+                table=table,
+                columns=columns,
+                score=item.final_score,
+                match_reason=reason_map.get(item.id, "embedding"),
+            )
+        )
 
     return results
 
@@ -240,10 +242,7 @@ async def _keyword_search_tables(
 
     from sqlalchemy import or_
 
-    stmt = (
-        select(CachedTable)
-        .where(CachedTable.connection_id == connection_id, or_(*conditions))
-    )
+    stmt = select(CachedTable).where(CachedTable.connection_id == connection_id, or_(*conditions))
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
@@ -308,9 +307,7 @@ async def _get_tables_by_names(
 
     from sqlalchemy import or_
 
-    conditions = [
-        CachedTable.table_name.ilike(name) for name in table_names
-    ]
+    conditions = [CachedTable.table_name.ilike(name) for name in table_names]
     result = await db.execute(
         select(CachedTable).where(
             CachedTable.connection_id == connection_id,
@@ -354,7 +351,5 @@ async def _get_related_tables(
     if not related_ids:
         return []
 
-    result = await db.execute(
-        select(CachedTable).where(CachedTable.id.in_(related_ids))
-    )
+    result = await db.execute(select(CachedTable).where(CachedTable.id.in_(related_ids)))
     return list(result.scalars().all())

@@ -6,14 +6,14 @@ Tests the 12 behaviors specified in 07-03-PLAN.md.
 from __future__ import annotations
 
 import pytest
-
-from app.llm.graph.query_plan import FilterClause, QueryPlan
 from app.llm.graph.nodes.sql_compiler import (
     BASE_QUERIES,
     build_filter_clause,
     build_in_clause,
     compile_query,
 )
+from app.llm.graph.query_plan import FilterClause, QueryPlan
+
 from app.llm.graph.nodes.field_registry import FIELD_REGISTRY
 
 
@@ -36,6 +36,7 @@ def _make_plan(
 # Test 1: compile_query() with empty filters → returns base_intent_sql unchanged
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_compile_query_empty_filters_returns_base_sql():
     """Empty filters → base SQL returned with no WHERE clause appended (tokens replaced)."""
     plan = _make_plan(intent="active_resources")
@@ -47,13 +48,16 @@ def test_compile_query_empty_filters_returns_base_sql():
     assert "{select_extras}" not in sql
     assert "{join_extras}" not in sql
     # Should equal the base query with empty tokens replaced
-    expected = BASE_QUERIES["active_resources"].replace("{select_extras}", "").replace("{join_extras}", "")
+    expected = (
+        BASE_QUERIES["active_resources"].replace("{select_extras}", "").replace("{join_extras}", "")
+    )
     assert sql == expected
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 2: compile_query() with single eq filter → adds WHERE field=?
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_compile_query_single_eq_filter():
     """Single eq filter on resource_name → adds WHERE name LIKE ?."""
@@ -72,6 +76,7 @@ def test_compile_query_single_eq_filter():
 # Test 3: compile_query() with multi-value in filter → adds WHERE field IN (?,?,?)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_compile_query_multi_value_in_filter():
     """IN filter with multiple values → WHERE IN (?,?,?) or multiple LIKE clauses."""
     plan = _make_plan(
@@ -87,16 +92,19 @@ def test_compile_query_multi_value_in_filter():
 # Test 4: compile_query() with date between filter → adds WHERE field BETWEEN ? AND ?
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_compile_query_date_between_filter():
     """Between filter on date field → WHERE WorkDate BETWEEN ? AND ?."""
     plan = _make_plan(
         domain="timesheet",
         intent="approved_timesheets",
-        filters=[FilterClause(
-            field="start_date",
-            op="between",
-            values=["2024-01-01", "2024-06-30"],
-        )],
+        filters=[
+            FilterClause(
+                field="start_date",
+                op="between",
+                values=["2024-01-01", "2024-06-30"],
+            )
+        ],
     )
     sql, params = compile_query(plan)
     assert "BETWEEN" in sql
@@ -108,6 +116,7 @@ def test_compile_query_date_between_filter():
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 5: compile_query() with numeric gt filter → adds WHERE field >= ?
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_compile_query_numeric_gt_filter():
     """GT filter on min_hours → WHERE Hours >= ?."""
@@ -125,6 +134,7 @@ def test_compile_query_numeric_gt_filter():
 # Test 6: build_in_clause([]) → returns "1=0" with empty params
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_build_in_clause_empty_values():
     """Empty values list → always-false clause."""
     clause, params = build_in_clause("Name", [])
@@ -135,6 +145,7 @@ def test_build_in_clause_empty_values():
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 7: build_in_clause(["x"]) → returns "field=?" with single param
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_build_in_clause_single_value():
     """Single value → collapses to equality."""
@@ -147,6 +158,7 @@ def test_build_in_clause_single_value():
 # Test 8: build_in_clause([>2000 values]) → raises ValueError
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_build_in_clause_exceeds_limit():
     """More than 2000 values → ValueError."""
     with pytest.raises(ValueError, match="2000"):
@@ -156,6 +168,7 @@ def test_build_in_clause_exceeds_limit():
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 9: compile_query(plan.domain="user_self", resource_id=None) → raises ValueError
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_compile_query_user_self_requires_resource_id():
     """RBAC guard: user_self domain without resource_id → ValueError."""
@@ -175,6 +188,7 @@ def test_compile_query_user_self_with_resource_id_ok():
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 10: compile_query() with {select_extras}/{join_extras} tokens replaced
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_compile_query_token_replacement():
     """{select_extras} and {join_extras} tokens are replaced in output SQL."""
@@ -265,10 +279,13 @@ def test_deferred_intents_excluded():
 # Test: build_filter_clause for all supported ops
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_build_filter_clause_eq_text():
     """eq on text field → LIKE with % wrapping."""
     fc = FIELD_REGISTRY["resource_name"]
-    clause, params = build_filter_clause(FilterClause(field="resource_name", op="eq", values=["Alice"]), fc)
+    clause, params = build_filter_clause(
+        FilterClause(field="resource_name", op="eq", values=["Alice"]), fc
+    )
     assert "LIKE" in clause
     assert "%Alice%" in params
 
@@ -294,7 +311,9 @@ def test_build_filter_clause_between_date():
 def test_build_filter_clause_gt_numeric():
     """gt on numeric → >= ?."""
     fc = FIELD_REGISTRY["min_budget"]
-    clause, params = build_filter_clause(FilterClause(field="min_budget", op="gt", values=["100000"]), fc)
+    clause, params = build_filter_clause(
+        FilterClause(field="min_budget", op="gt", values=["100000"]), fc
+    )
     assert ">=" in clause
     assert "100000" in params
 
@@ -302,7 +321,9 @@ def test_build_filter_clause_gt_numeric():
 def test_build_filter_clause_lt_numeric():
     """lt on numeric → < ?."""
     fc = FIELD_REGISTRY["min_budget"]
-    clause, params = build_filter_clause(FilterClause(field="min_budget", op="lt", values=["50000"]), fc)
+    clause, params = build_filter_clause(
+        FilterClause(field="min_budget", op="lt", values=["50000"]), fc
+    )
     assert "<" in clause
     assert "50000" in params
 
@@ -319,7 +340,9 @@ def test_build_filter_clause_in_text():
 def test_build_filter_clause_boolean():
     """boolean field → = ? with 1/0."""
     fc = FIELD_REGISTRY["billable"]
-    clause, params = build_filter_clause(FilterClause(field="billable", op="eq", values=["true"]), fc)
+    clause, params = build_filter_clause(
+        FilterClause(field="billable", op="eq", values=["true"]), fc
+    )
     assert "=" in clause
     # Should coerce to 1/0
     assert 1 in params or "1" in params

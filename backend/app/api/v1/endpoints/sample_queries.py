@@ -1,5 +1,6 @@
 import logging
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -42,8 +43,8 @@ class SampleQueryResponse(BaseModel):
     description: str | None
     tags: list[str] | None
     is_validated: bool
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -83,6 +84,8 @@ async def create_sample_query(
         sq.question_embedding = await embed_sample_query(sq)
     except Exception:
         logger.warning("Failed to embed sample query %s", sq.id, exc_info=True)
+    await db.flush()
+    await db.refresh(sq)
     return sq
 
 
@@ -107,6 +110,8 @@ async def update_sample_query(
         sq.question_embedding = await embed_sample_query(sq)
     except Exception:
         logger.warning("Failed to embed sample query %s", sq_id, exc_info=True)
+    await db.flush()
+    await db.refresh(sq)
     return sq
 
 

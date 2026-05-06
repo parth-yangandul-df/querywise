@@ -18,14 +18,8 @@ import { useForm } from '@mantine/form';
 import { IconAlertCircle, IconDatabase } from '@tabler/icons-react';
 
 import { api } from '../api/client';
-import { setToken } from '../utils/auth';
-
-interface LoginResponse {
-  access_token: string;
-  token_type: string;
-  role: string;
-  resource_id: number | null;
-}
+import { setUserInfo } from '../utils/auth';
+import type { UserInfo } from '../utils/auth';
 
 const DEV_ACCOUNTS = [
   { label: 'Admin', email: 'admin@querywise.dev', password: 'admin123', color: 'red' },
@@ -53,8 +47,10 @@ export function LoginPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.post<LoginResponse>('/auth/login', values);
-      setToken(res.data.access_token);
+      // Backend sets access_token HttpOnly cookie + csrf_token cookie.
+      // Response body carries user info only (no token).
+      const res = await api.post<UserInfo>('/auth/login', values);
+      setUserInfo(res.data);
       navigate(from, { replace: true });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Login failed';
@@ -124,24 +120,28 @@ export function LoginPage() {
             </Stack>
           </form>
 
-          {/* Dev quick-fill */}
-          <Divider label="Dev accounts" labelPosition="center" />
-          <Group gap="xs" justify="center">
-            {DEV_ACCOUNTS.map((a) => (
-              <Badge
-                key={a.label}
-                color={a.color}
-                variant="light"
-                style={{ cursor: 'pointer' }}
-                onClick={() => quickFill(a.email, a.password)}
-              >
-                {a.label}
-              </Badge>
-            ))}
-          </Group>
-          <Text size="xs" c="dimmed" ta="center">
-            Click a badge to fill credentials, then sign in
-          </Text>
+          {/* Dev quick-fill (development only) */}
+          {import.meta.env.DEV && (
+            <>
+              <Divider label="Dev accounts" labelPosition="center" />
+              <Group gap="xs" justify="center">
+                {DEV_ACCOUNTS.map((a) => (
+                  <Badge
+                    key={a.label}
+                    color={a.color}
+                    variant="light"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => quickFill(a.email, a.password)}
+                  >
+                    {a.label}
+                  </Badge>
+                ))}
+              </Group>
+              <Text size="xs" c="dimmed" ta="center">
+                Click a badge to fill credentials, then sign in
+              </Text>
+            </>
+          )}
         </Stack>
       </Card>
     </Box>

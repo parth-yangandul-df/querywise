@@ -46,17 +46,6 @@ services:
     volumes: []
     command: npm run dev -- --host
 
-  chatbot-frontend:
-    build:
-      context: ./chatbot-frontend
-      dockerfile: Dockerfile
-    ports:
-      - "5174:5174"
-    environment:
-      VITE_API_URL: http://localhost:8000
-    volumes: []
-    command: npm run dev -- --host
-
   ollama:
     image: ollama/ollama
     profiles:
@@ -73,8 +62,8 @@ services:
     profiles:
       - pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@querywise.dev
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@querywise.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
     ports:
       - "5050:80"
     depends_on:

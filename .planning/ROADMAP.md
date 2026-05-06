@@ -103,6 +103,64 @@ Plans:
 - [x] 08-05-PLAN.md — Query Caching + Observability
 - [x] 08-06-PLAN.md — Semantic Integration + E2E Pipeline
 
+### Phase 9: Query Engine Refactor
+
+**Goal:** Replace the current brittle routing (Groq extractor, graph branches, domain agents, SQL compiler, fallback logic, turn-context heuristics) with a single canonical pipeline: Conversation Resolver → Query Planner → **Plan Validator** → Capability Matcher → Strategy Selector → Executor → Result Narrator → State Store.
+
+**Key Intelligence Layers Added:**
+- **Plan Validator** (NEW): Validates per-filter confidence, resolves entities against known metadata, detects contradictions with prior state, applies clarification policy
+- **Per-filter confidence**: Not just global confidence — each filter has its own confidence score (0.0-1.0)
+- **Entity resolution**: Matches filter values against client tables, project names, skill dictionaries, status vocabularies
+- **Contradiction detection**: Flags conflicts between current filters and prior state
+- **Clarification policy**: Smart disambiguation based on confidence, ambiguity, and contradictions
+
+**Status:** Planned
+**Depends on:** Phase 8
+**Requirements**: QE-01, QE-02, QE-03, QE-04, QE-05, QE-06, QE-07, QE-08, QE-09, QE-10, QE-11, QE-12, QE-13, QE-14, QE-15, QE-16, QE-17, QE-18, QE-19, QE-20, QE-21
+
+**Sub-phases:**
+1. Core Contracts (QueryPlan, ConversationState, PlanDecision, ExecutionStrategy types)
+2. Config Cleanup (replace scattered query config)
+3. Capability Catalog Extraction (trusted SQL → structured capabilities)
+4. Planner Implementation (structured planning, no SQL output)
+5. Capability Matcher (full/partial/no match scoring)
+6. Strategy Selector (reject/clarify/template/generate routing)
+7. Template Executor (trusted fast path)
+8. Generation Executor (controlled fallback)
+9. Execution Guardrail Layer (centralized RBAC, validation, limits)
+10. Conversation State System (durable thread state, Postgres-backed)
+11. Session Ownership and Security Fix (user-scoped sessions, migration)
+12. Query Service Rewrite (clean orchestrator)
+13. API Layer Update (thin, stable endpoints)
+14. Retrieval Split (lightweight vs heavyweight)
+15. Observability (metrics, latency tracking)
+16. Legacy Retirement (delete old graph stack)
+
+**Success Criteria:**
+  1. Common business questions route to trusted predefined capabilities reliably
+  2. Novel questions still work through generation fallback
+  3. Multi-turn refinement is materially more reliable with persistent state
+  4. Topic switching is explicit and stable
+  5. One canonical pipeline, one QueryPlan contract, one ConversationState model
+  6. Lower p95 latency for common asks, lower LLM cost
+  7. Legacy graph stack fully removed
+  8. Plan Validator stage validates plans before matcher — per-filter confidence, entity resolution, contradiction detection
+  9. Per-filter confidence in FilterClause (0.0-1.0, default 1.0)
+  10. Entity resolution against known metadata (clients, projects, skills, statuses)
+  11. Semantic regression suite — 20+ test cases proving system smartness is real (not vibes)
+
+Plans:
+- [ ] 09-01-PLAN.md — Core Contracts + Config Cleanup (sub-phases 1–2)
+- [ ] 09-02-PLAN.md — Capability Catalog Extraction (sub-phase 3)
+- [ ] 09-03-PLAN.md — Planner Implementation (sub-phase 4)
+- [ ] 09-04-PLAN.md — Capability Matcher + Strategy Selector (sub-phases 5–6)
+- [ ] 09-05-PLAN.md — Template Executor + Generation Executor (sub-phases 7–8)
+- [ ] 09-06-PLAN.md — Execution Guardrail Layer (sub-phase 9)
+- [ ] 09-07-PLAN.md — Conversation State System + Session Ownership (sub-phases 10–11)
+- [ ] 09-08-PLAN.md — Query Service Rewrite + API Layer Update (sub-phases 12–13)
+- [ ] 09-09-PLAN.md — Retrieval Split + Observability (sub-phases 14–15)
+- [ ] 09-10-PLAN.md — Legacy Retirement (sub-phase 16)
+
 ---
 
 ## Progress
@@ -114,3 +172,4 @@ Plans:
 | 6. Context-Aware Domain Tools | 5/5 | Complete | 2026-04-02 |
 | 7. QueryPlan Compiler | 4/4 | Complete | 2026-04-06 |
 | 8. Context-Aware Hybrid | 6/6 | Complete | 2026-04-07 |
+| 9. Query Engine Refactor | 0/10 | Planned | — |

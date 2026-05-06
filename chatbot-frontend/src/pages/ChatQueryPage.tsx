@@ -1,18 +1,15 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams, useOutletContext } from 'react-router-dom'
-import { queryApi, type ConversationTurn } from '@/api/queryApi'
+import { queryApi, type QueryStageEvent } from '@/api/queryApi'
 import { useSessionMessages } from '@/hooks/useThreads'
 import { PureMultimodalInput } from '@/components/ui/multimodal-ai-chat-input'
 import { SpotlightTable } from '@/components/ui/spotlight-table'
-import { MorphLoading } from '@/components/ui/morph-loading'
-import { RecentQuestions, saveRecentQuestion } from '@/components/widget/RecentQuestions'
+import { RecentQuestions, saveRecentQuestion } from '@/components/RecentQuestions'
+import { loadPersistedChatMessages, persistChatMessages } from '@/lib/chat-session-cache'
 import type { QueryResult } from '@/types/api'
 import type { ChatLayoutContext } from '@/components/layout/ChatLayout'
-import { Bot, User, AlertCircle, ChevronDown, ChevronUp, Copy, Check, Zap, MessageSquareOff } from 'lucide-react'
-
-// ── Constants ──────────────────────────────────────────────────────────────────
-const CONVERSATION_HISTORY_TURNS = 3 // last N turns (N user + N assistant = 2N messages)
+import { Bot, User, AlertCircle, ChevronDown, ChevronUp, Copy, Check, Zap, MessageSquareOff, Loader2 } from 'lucide-react'
 
 // ── Message types ──────────────────────────────────────────────────────────────
 type ChatMessage =
@@ -69,14 +66,19 @@ function AssistantMessage({
   result: QueryResult
   onFollowup: (q: string) => void
 }) {
+  const primaryText = result.clarification_message ?? result.summary
+  const suggestionOptions = result.turn_type === 'clarification'
+    ? result.clarification_options
+    : result.suggested_followups
+
   return (
     <div className="flex gap-3 group">
       <div className="shrink-0 w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center">
         <Bot className="h-4 w-4 text-gray-700" />
       </div>
       <div className="flex-1 min-w-0 space-y-3">
-        {result.summary && (
-          <p className="text-sm text-gray-900 leading-relaxed">{result.summary}</p>
+        {primaryText && (
+          <p className="text-sm text-gray-900 leading-relaxed">{primaryText}</p>
         )}
         {result.highlights.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
@@ -87,6 +89,19 @@ function AssistantMessage({
               >
                 {h}
               </span>
+            ))}
+          </div>
+        )}
+        {suggestionOptions.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {suggestionOptions.map((option) => (
+              <button
+                key={option}
+                onClick={() => onFollowup(option)}
+                className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-700 transition-colors hover:border-gray-900 hover:text-gray-900"
+              >
+                {option}
+              </button>
             ))}
           </div>
         )}
@@ -110,22 +125,6 @@ function AssistantMessage({
           />
         )}
         {result.final_sql && <SqlBlock sql={result.final_sql} />}
-        {result.suggested_followups.length > 0 && (
-          <div className="pt-1">
-            <p className="text-xs text-muted-foreground mb-2 font-medium">Continue exploring:</p>
-            <div className="flex flex-wrap gap-2">
-              {result.suggested_followups.map((q, i) => (
-                <button
-                  key={i}
-                  onClick={() => onFollowup(q)}
-                  className="px-3 py-1.5 text-xs rounded-full border border-border bg-background hover:bg-accent hover:text-accent-foreground transition-colors text-left"
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )
@@ -163,15 +162,27 @@ function ErrorMessage({ message }: { message: string }) {
 }
 
 // ── Typing indicator ───────────────────────────────────────────────────────────
-function TypingIndicator() {
+function TypingIndicator({ stage }: { stage: QueryStageEvent | null }) {
+  const progress = stage?.progress ?? 15
+
   return (
-    <div className="flex gap-3 items-center">
+    <div className="flex gap-3 items-start">
       <div className="shrink-0 w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center">
         <Bot className="h-4 w-4 text-gray-700" />
       </div>
-      <div className="flex items-center gap-2 px-4 py-3 rounded-2xl rounded-tl-sm bg-muted">
-        <MorphLoading size="sm" className="w-10 h-10" />
-        <span className="text-xs text-muted-foreground">Analyzing your question...</span>
+      <div className="min-w-[260px] max-w-[340px] px-4 py-3 rounded-2xl rounded-tl-sm bg-muted">
+        <div className="flex items-center gap-3">
+          <Loader2 className="h-5 w-5 shrink-0 animate-spin text-gray-700" />
+          <div className="flex-1 min-w-0">
+            <div className="h-1.5 rounded-full bg-gray-200 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-gray-900 transition-all duration-500 ease-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">{stage?.label ?? 'Extracting intent...'}</p>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -214,25 +225,6 @@ function NoThreadSelected() {
   )
 }
 
-// ── Build conversation history for API ────────────────────────────────────────
-function buildConversationHistory(messages: ChatMessage[]): ConversationTurn[] {
-  const turns: ConversationTurn[] = []
-  for (const msg of messages) {
-    if (msg.role === 'user') {
-      turns.push({ role: 'user', content: msg.content })
-    } else if (msg.role === 'assistant') {
-      // Use summary as assistant content; fall back to noting results were returned
-      const content = msg.result.summary
-        ?? (msg.result.row_count > 0 ? `Returned ${msg.result.row_count} rows.` : 'No results found.')
-      turns.push({ role: 'assistant', content })
-    }
-    // Skip error messages from history
-  }
-  // Last N turns = last N*2 messages
-  const maxMessages = CONVERSATION_HISTORY_TURNS * 2
-  return turns.slice(-maxMessages)
-}
-
 // ── Reconstruct messages from session history ─────────────────────────────────
 function buildMessagesFromHistory(
   historyItems: Array<{
@@ -246,6 +238,7 @@ function buildMessagesFromHistory(
     row_count: number | null
     execution_time_ms: number | null
     retry_count: number
+    turn_type: string
   }>
 ): ChatMessage[] {
   const messages: ChatMessage[] = []
@@ -275,14 +268,15 @@ function buildMessagesFromHistory(
         row_count: item.row_count ?? 0,
         execution_time_ms: item.execution_time_ms ?? 0,
         truncated: false,
-        summary: item.result_summary,
+        summary: item.turn_type === 'clarification' ? null : item.result_summary,
         highlights: [],
         suggested_followups: [],
-        llm_provider: '',
-        llm_model: '',
+        llm_provider: null,
+        llm_model: null,
         retry_count: item.retry_count,
-        turn_context: null,
-        topic_switch_detected: false,
+        turn_type: item.turn_type,
+        clarification_message: item.turn_type === 'clarification' ? item.result_summary : null,
+        clarification_options: [],
       }
       messages.push({
         id: `${item.id}-assistant`,
@@ -302,6 +296,7 @@ export function ChatQueryPage() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [historyLoaded, setHistoryLoaded] = useState(false)
+  const [pipelineStage, setPipelineStage] = useState<QueryStageEvent | null>(null)
   const [attachments, setAttachments] = useState<{ url: string; name: string; contentType: string; size: number }[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -315,12 +310,31 @@ export function ChatQueryPage() {
   }, [threadId])
 
   useEffect(() => {
+    if (!threadId || historyLoaded) {
+      return
+    }
+
+    const cachedMessages = loadPersistedChatMessages(threadId)
+    if (cachedMessages) {
+      setMessages(cachedMessages)
+      setHistoryLoaded(true)
+      return
+    }
+
     if (sessionMessages && !historyLoaded) {
       const restored = buildMessagesFromHistory(sessionMessages)
       setMessages(restored)
       setHistoryLoaded(true)
     }
-  }, [sessionMessages, historyLoaded])
+  }, [historyLoaded, sessionMessages, threadId])
+
+  useEffect(() => {
+    if (!threadId || !historyLoaded) {
+      return
+    }
+
+    persistChatMessages(threadId, messages)
+  }, [historyLoaded, messages, threadId])
 
   // Scroll to bottom on new messages
   const scrollToBottom = useCallback(() => {
@@ -331,15 +345,24 @@ export function ChatQueryPage() {
     scrollToBottom()
   }, [messages, scrollToBottom])
 
-  const mutation = useMutation({
-    mutationFn: ({ question, connId, history }: { question: string; connId: string; history: ConversationTurn[] }) =>
-      queryApi.execute({
-        connection_id: connId,
-        question,
-        session_id: threadId,
-        conversation_history: history,
-      }),
+  const mutation = useMutation<QueryResult, Error, { question: string; connId: string }>({
+    mutationFn: async ({ question, connId }: { question: string; connId: string }) => {
+      return await queryApi.executeStream(
+        {
+          connection_id: connId,
+          question,
+          session_id: threadId,
+        },
+        (event) => {
+          if (event.type === 'stage') setPipelineStage(event)
+        },
+      )
+    },
+    onMutate: () => {
+      setPipelineStage(null)
+    },
     onSuccess: (result) => {
+      setPipelineStage(null)
       setMessages((prev) => [
         ...prev,
         { id: `${Date.now()}-assistant`, role: 'assistant', result },
@@ -351,6 +374,7 @@ export function ChatQueryPage() {
       }
     },
     onError: (error: unknown) => {
+      setPipelineStage(null)
       const message = error instanceof Error ? error.message : 'An unexpected error occurred'
       setMessages((prev) => [
         ...prev,
@@ -373,15 +397,12 @@ export function ChatQueryPage() {
 
       setMessages((prev) => {
         const next = [...prev, userMsg]
-        const history = buildConversationHistory(prev) // history = messages BEFORE this question
-        mutation.mutate({ question: content.trim(), connId: connectionId, history })
+        mutation.mutate({ question: content.trim(), connId: connectionId })
         return next
       })
     },
-    [connectionId, mutation],
+    [connectionId, mutation, queryClient, threadId],
   )
-
-  const handleFollowup = useCallback((q: string) => sendMessage(q), [sendMessage])
 
   const hasMessages = messages.length > 0
 
@@ -413,7 +434,10 @@ export function ChatQueryPage() {
       <div className="flex-1 overflow-y-auto custom-scrollbar bg-white">
         {loadingHistory ? (
           <div className="flex-1 flex items-center justify-center p-8">
-            <div className="text-xs text-gray-400">Loading conversation...</div>
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Loading conversation...</span>
+            </div>
           </div>
         ) : !hasMessages ? (
           <WelcomeScreen onExample={sendMessage} />
@@ -428,13 +452,13 @@ export function ChatQueryPage() {
                   <AssistantMessage
                     key={msg.id}
                     result={msg.result}
-                    onFollowup={handleFollowup}
+                    onFollowup={sendMessage}
                   />
                 )
               }
               return <ErrorMessage key={msg.id} message={msg.message} />
             })}
-            {mutation.isPending && <TypingIndicator />}
+            {mutation.isPending && <TypingIndicator stage={pipelineStage} />}
             <div ref={messagesEndRef} />
           </div>
         )}

@@ -4,14 +4,12 @@ These are pure-Python tests with no DB dependencies — no mocking needed.
 All four confirmed PRMS join rules are verified here.
 """
 
-import pytest
 
 from app.semantic.relationship_inference import (
     InferredRelationship,
     get_inferred_relationships,
     get_referenced_tables,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

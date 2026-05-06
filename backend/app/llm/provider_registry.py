@@ -33,12 +33,14 @@ def get_provider(provider_type: str, api_key: str | None = None) -> BaseLLMProvi
     # For Ollama, inject the configured API key if the caller didn't supply one
     if provider_type == "ollama" and api_key is None:
         from app.config import settings as _settings
+
         if _settings.ollama_api_key:
             api_key = _settings.ollama_api_key
 
     # For Groq, inject the configured API key if the caller didn't supply one
     if provider_type == "groq" and api_key is None:
         from app.config import settings as _settings
+
         if _settings.groq_api_key:
             api_key = _settings.groq_api_key
 
@@ -72,7 +74,6 @@ def get_embedding_provider(api_key: str | None = None) -> BaseLLMProvider:
        - "ollama"      → Ollama (local or cloud via OLLAMA_API_KEY)
        - "openai"      → OpenAI text-embedding-3-small
        - "anthropic"   → fall back to OpenAI (Anthropic has no embeddings API)
-       - "openrouter"  → fall back to OpenAI (OpenRouter has no embeddings API)
     """
     from app.config import settings
 
@@ -80,7 +81,7 @@ def get_embedding_provider(api_key: str | None = None) -> BaseLLMProvider:
     provider_type = settings.embedding_provider or settings.default_llm_provider
 
     # Providers without an embeddings endpoint fall back to OpenAI
-    if provider_type in ("anthropic", "openrouter", "groq"):
+    if provider_type in ("anthropic", "groq"):
         provider_type = "openai"
 
     return get_provider(provider_type, api_key=api_key)

@@ -1,0 +1,117 @@
+these are some updated sql queries that i need you to update in the domain tools, whehter its in the domains or sql compiler:
+
+1. Project resources:
+SELECT p.ProjectName, c.ClientId, r.ResourceName, tc.TechCategoryName,
+        pr.Billable, pr.ResourceRole, pr.PercentageAllocation, b.businessunitname
+        FROM Project p
+        JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId
+        JOIN Resource r ON pr.ResourceId = r.ResourceId
+        JOIN TechCatagory tc ON tc.TechCategoryId = r.TechCategoryId
+        JOIN Client c ON c.ClientId = pr.ClientId
+		join BusinessUnit b on b.businessunitid = pr.businessunitid
+        WHERE p.projectname like ? 
+		and r.IsActive = 1 and pr.PercentageAllocation>1 
+		and (pr.Billable=1 or pr.Shadow=1) and pr.EndDate>GETDATE()
+2. Active Projects:
+SELECT p.ProjectName as [Project Name], c.clientname as [Client Name],
+        cast(p.StartDate as date) as [Start date], cast(p.EndDate as date) as [End date],
+        r.ResourceName as [Project Manager], s.StatusName as Status
+        FROM Project p
+        JOIN Client c ON p.ClientId = c.ClientId
+        JOIN Status s ON s.StatusId = p.ProjectStatusId
+        JOIN Resource r ON r.ResourceId = p.ProjectManagerId
+		where (p.EndDate>getdate() or EndDate is null)
+		and s.StatusName = 'Active'
+3. Active Resources:
+SELECT r.EmployeeId as [EMPID], r.ResourceName as [Name], r.EmailId, b.businessunitname,
+        dr.designationname as [Designation]
+        FROM Resource r
+        JOIN Designation dr ON r.designationid = dr.designationid
+		join Businessunit b on b.businessunitid = r.businessunitid
+        WHERE r.IsActive = 1 AND r.statusid = 8
+        ORDER BY r.ResourceName ASC
+
+4. benched resources:
+SELECT DISTINCT r.employeeid as [EMPID], r.ResourceName as [Name], r.EmailId, p.projectname,
+        t.TechCategoryName, st.statusname, pr.bench
+        FROM Resource r
+        JOIN ProjectResource pr ON r.ResourceId = pr.ResourceId
+        JOIN Project p ON pr.ProjectId = p.ProjectId
+        JOIN TechCatagory t ON t.TechCategoryId = r.TechCategoryid
+		join status st on st.statusid = r.statusid
+        WHERE pr.bench = 1
+		and st.statusname = 'Active'
+		and r.isactive =1
+
+5. benched by skill same as above use skill filter later
+
+6. same as active resources above, add skills filter
+
+7. resource_availability:
+SELECT r.ResourceId, r.ResourceName, r.EmailId
+        FROM Resource r
+		join status st on st.statusid = r.statusid
+        WHERE r.IsActive = 1 and st.statusname='Active'
+        AND ResourceId NOT IN (SELECT DISTINCT ResourceId FROM ProjectResource WHERE IsActive = 1)
+
+8. SELECT r.EmployeeId as [EMPID], r.ResourceName as [Employee Name],
+        p.ProjectName as [Project Name],
+        CAST(pr.StartDate AS DATE) AS [Start Date],
+        CAST(pr.EndDate AS DATE) AS [End Date],
+        pr.resourcerole as [Role], pr.PercentageAllocation as [Allocation],
+        pr.Billable 
+        FROM Resource r
+        JOIN ProjectResource pr ON r.ResourceId = pr.ResourceId
+        JOIN Project p ON pr.ProjectId = p.ProjectId
+		where PercentageAllocation>1
+		and (pr.enddate>getdate() or pr.enddate = NULL)
+filter by resource added while filtering
+
+9. Resource Skill List:
+SELECT DISTINCT r.ResourceName, s.Name, rs.SkillExperience
+        FROM Resource r
+        JOIN PA_ResourceSkills rs ON r.ResourceId = rs.ResourceId
+        JOIN PA_Skills s ON rs.SkillId = s.SkillId
+		join status st on st.statusid = r.statusid
+        WHERE r.IsActive = 1 AND st.statusname = 'Active'
+
+10. Reports to:
+SELECT r.EmployeeId, r.ResourceName, pm.ResourceName as [Reporting To]
+        FROM Resource r 
+        JOIN Resource pm ON pm.ResourceId = r.ReportingTo
+		join Status st on st.StatusId = r.StatusId
+        WHERE pm.ResourceName LIKE ? AND r.IsActive = 1 AND st.statusname='Active'
+
+11. Active Clients:
+SELECT distinct c.ClientName, c.Description, c.CountryId
+        FROM Client c
+        JOIN Status st ON c.StatusId = st.StatusId
+        WHERE c.IsActive = 1 and st.statusname='Active'
+
+12. Client projects: (projects for active clients)
+SELECT c.ClientName, p.ProjectName, p.StartDate, p.EndDate
+        FROM Client c
+        JOIN Project p ON c.ClientId = p.ClientId
+		JOIN Status st ON c.StatusId = st.StatusId
+        WHERE (c.IsActive = 1 and st.statusname='Active')
+		and (p.EndDate>getdate() or EndDate is null)
+		order by clientname
+
+13. Client Status:
+ SELECT c.ClientName, st.StatusName
+        FROM Client c
+        JOIN Status st ON c.StatusId = st.StatusId 
+
+14. Project by client same as client projects remove project by client
+
+15. remove overdue projects and project status
+
+16. Approved timesheets:
+
+	SELECT ts.id, r.ResourceName,ts.Project,ts.ActivityCode, re.ResourceName as [Approver], ts.Reportdate, ts.Hrs, ts.Comment
+			FROM ts_eoddetails ts
+			JOIN Resource r ON ts.ResourceId = r.ResourceId
+			join resource re on ts.ApprovedBy = re.EmailId
+			WHERE ts.IsApproved = 1 AND ts.IsDeleted = 0 AND ts.IsRejected = 0 
+			ORDER BY ts.Reportdate DESC
+add filters for resourcename

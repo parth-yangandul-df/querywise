@@ -22,6 +22,8 @@ dependencies = [
     "email-validator>=2.0",
     "loguru>=0.7",
     "platformdirs>=4.0",
+    "tenacity>=8.0",
+    "prometheus-fastapi-instrumentator>=7.0",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +32,7 @@ llm = [
     "openai>=1.50",
     "langgraph>=0.2",
     "langchain-core>=0.3",
+    "langsmith>=0.1",
 ]
 sqlserver = [
     "aioodbc>=0.5",
@@ -52,6 +55,15 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+# graph.py contains an ASCII-art topology diagram in its module docstring
+"app/llm/graph/graph.py" = ["E501"]
+# Prompts are natural language, not Python code
+"app/llm/prompts/*.py" = ["E501"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "e2e: end-to-end integration tests (require a running backend and real database connection)",
+]

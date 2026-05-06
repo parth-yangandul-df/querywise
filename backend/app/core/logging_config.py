@@ -11,6 +11,7 @@ Outputs:
 
 from __future__ import annotations
 
+import contextvars
 import datetime as _dt
 import gzip
 import json
@@ -124,9 +125,9 @@ class InterceptHandler(logging.Handler):
         }
         _serialized = _format_record(_record_dict)
 
-        logger.opt(depth=depth, exception=record.exc_info).bind(
-            _serialized=_serialized
-        ).log(level, record.getMessage())
+        logger.opt(depth=depth, exception=record.exc_info).bind(_serialized=_serialized).log(
+            level, record.getMessage()
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +143,7 @@ def _make_retention_fn(log_dir: Path, compress_after_days: int = 10):
     Compresses .jsonl log files older than ``compress_after_days`` days to .gz.
     Never deletes any log file.
     """
+
     def _retain(files: list) -> None:
         cutoff = _dt.datetime.now(_dt.UTC) - _dt.timedelta(days=compress_after_days)
         for filepath in files:
@@ -157,6 +159,7 @@ def _make_retention_fn(log_dir: Path, compress_after_days: int = 10):
                     except Exception:
                         pass  # leave original intact on any error
             # .gz files: never touch
+
     return _retain
 
 
@@ -204,14 +207,26 @@ def setup_logging(
         log_dir = Path(__file__).parent.parent.parent / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
 
+        def _ensure_serialized(record: dict) -> bool:
+            """Ensure _serialized is present before the format string is applied.
+
+            Some records (e.g. from spawned processes or direct loguru calls) skip
+            InterceptHandler and arrive without _serialized in extra.  We populate
+            it here so the format string never raises KeyError.
+            """
+            if "_serialized" not in record["extra"]:
+                record["extra"]["_serialized"] = _format_record(record)
+            return True
+
         # Date-based filename: querywise_2026-04-13.jsonl
         # No enqueue=True so logs are written synchronously (real-time)
         logger.add(
             str(log_dir / f"{app_name}_{{time:YYYY-MM-DD}}.jsonl"),
             format="{extra[_serialized]}\n",
+            filter=_ensure_serialized,
             level="DEBUG",
-            rotation="1 day",
-            retention=_make_retention_fn(log_dir, compress_after_days=10),
+            rotation=rotation,
+            retention=retention,
         )
 
     # Intercept stdlib logging so existing getLogger(__name__) calls work
@@ -229,6 +244,19 @@ def setup_logging(
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
+# Context variable for propagating request IDs through async call chains
+_request_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="")
+
+
+def set_request_id(request_id: str) -> None:
+    """Store the request ID in the current async context for log correlation."""
+    _request_id_ctx.set(request_id)
+
+
 def get_trace_id() -> str:
-    """Generate a UUID4 trace ID for correlating async operations."""
-    return str(uuid4())
+    """Return the request ID from context if available, otherwise generate a UUID4.
+
+    Falls back to a fresh UUID4 when no request ID has been set in the current
+    async context (e.g. background tasks, startup).
+    """
+    return _request_id_ctx.get() or str(uuid4())

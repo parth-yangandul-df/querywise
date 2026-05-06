@@ -80,12 +80,14 @@ async def resolve_glossary(
         for kw in keywords:
             if kw in term_lower or term_lower in kw:
                 if term.term not in seen_terms:
-                    results.append(ResolvedGlossary(
-                        term=term.term,
-                        definition=term.definition,
-                        sql_expression=term.sql_expression,
-                        related_tables=term.related_tables or [],
-                    ))
+                    results.append(
+                        ResolvedGlossary(
+                            term=term.term,
+                            definition=term.definition,
+                            sql_expression=term.sql_expression,
+                            related_tables=term.related_tables or [],
+                        )
+                    )
                     seen_terms.add(term.term)
                 break
 
@@ -93,12 +95,14 @@ async def resolve_glossary(
     question_lower = question.lower()
     for term in all_terms:
         if term.term.lower() in question_lower and term.term not in seen_terms:
-            results.append(ResolvedGlossary(
-                term=term.term,
-                definition=term.definition,
-                sql_expression=term.sql_expression,
-                related_tables=term.related_tables or [],
-            ))
+            results.append(
+                ResolvedGlossary(
+                    term=term.term,
+                    definition=term.definition,
+                    sql_expression=term.sql_expression,
+                    related_tables=term.related_tables or [],
+                )
+            )
             seen_terms.add(term.term)
 
     # Embedding similarity (top 3)
@@ -116,15 +120,19 @@ async def resolve_glossary(
             emb_result = await db.execute(stmt)
             for term in emb_result.scalars().all():
                 if term.term not in seen_terms:
-                    results.append(ResolvedGlossary(
-                        term=term.term,
-                        definition=term.definition,
-                        sql_expression=term.sql_expression,
-                        related_tables=term.related_tables or [],
-                    ))
+                    results.append(
+                        ResolvedGlossary(
+                            term=term.term,
+                            definition=term.definition,
+                            sql_expression=term.sql_expression,
+                            related_tables=term.related_tables or [],
+                        )
+                    )
                     seen_terms.add(term.term)
         except Exception:
-            logger.warning("Glossary vector search failed, using keyword results only.", exc_info=True)
+            logger.warning(
+                "Glossary vector search failed, using keyword results only.", exc_info=True
+            )
 
     return results
 
@@ -145,15 +153,20 @@ async def resolve_metrics(
         select(MetricDefinition).where(MetricDefinition.connection_id == connection_id)
     )
     for metric in all_metrics_result.scalars().all():
-        if metric.display_name.lower() in question_lower or metric.metric_name.lower() in question_lower:
+        if (
+            metric.display_name.lower() in question_lower
+            or metric.metric_name.lower() in question_lower
+        ):
             if metric.metric_name not in seen:
-                results.append(ResolvedMetric(
-                    metric_name=metric.metric_name,
-                    display_name=metric.display_name,
-                    sql_expression=metric.sql_expression,
-                    related_tables=metric.related_tables or [],
-                    dimensions=metric.dimensions or [],
-                ))
+                results.append(
+                    ResolvedMetric(
+                        metric_name=metric.metric_name,
+                        display_name=metric.display_name,
+                        sql_expression=metric.sql_expression,
+                        related_tables=metric.related_tables or [],
+                        dimensions=metric.dimensions or [],
+                    )
+                )
                 seen.add(metric.metric_name)
 
     # Embedding similarity
@@ -165,24 +178,26 @@ async def resolve_metrics(
                     MetricDefinition.connection_id == connection_id,
                     MetricDefinition.metric_embedding.isnot(None),
                 )
-                .order_by(
-                    MetricDefinition.metric_embedding.cosine_distance(question_embedding)
-                )
+                .order_by(MetricDefinition.metric_embedding.cosine_distance(question_embedding))
                 .limit(3)
             )
             emb_result = await db.execute(stmt)
             for metric in emb_result.scalars().all():
                 if metric.metric_name not in seen:
-                    results.append(ResolvedMetric(
-                        metric_name=metric.metric_name,
-                        display_name=metric.display_name,
-                        sql_expression=metric.sql_expression,
-                        related_tables=metric.related_tables or [],
-                        dimensions=metric.dimensions or [],
-                    ))
+                    results.append(
+                        ResolvedMetric(
+                            metric_name=metric.metric_name,
+                            display_name=metric.display_name,
+                            sql_expression=metric.sql_expression,
+                            related_tables=metric.related_tables or [],
+                            dimensions=metric.dimensions or [],
+                        )
+                    )
                     seen.add(metric.metric_name)
         except Exception:
-            logger.warning("Metrics vector search failed, using keyword results only.", exc_info=True)
+            logger.warning(
+                "Metrics vector search failed, using keyword results only.", exc_info=True
+            )
 
     return results
 
@@ -274,11 +289,7 @@ async def resolve_knowledge(
                     KnowledgeDocument.connection_id == connection_id,
                     KnowledgeChunk.chunk_embedding.isnot(None),
                 )
-                .order_by(
-                    KnowledgeChunk.chunk_embedding.cosine_distance(
-                        question_embedding
-                    )
-                )
+                .order_by(KnowledgeChunk.chunk_embedding.cosine_distance(question_embedding))
                 .limit(limit)
             )
             result = await db.execute(stmt)
@@ -303,9 +314,7 @@ async def resolve_knowledge(
     if not keywords:
         return []
 
-    keyword_predicates = [
-        KnowledgeChunk.content.ilike(f"%{kw}%") for kw in keywords
-    ]
+    keyword_predicates = [KnowledgeChunk.content.ilike(f"%{kw}%") for kw in keywords]
     stmt = (
         select(KnowledgeChunk, KnowledgeDocument)
         .join(

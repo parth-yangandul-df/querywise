@@ -56,6 +56,8 @@ async def create_metric(
         metric.metric_embedding = await embed_metric(metric)
     except Exception:
         logger.warning("Failed to embed metric %s", metric.id, exc_info=True)
+    await db.flush()
+    await db.refresh(metric)
     return metric
 
 
@@ -98,6 +100,8 @@ async def update_metric(
         metric.metric_embedding = await embed_metric(metric)
     except Exception:
         logger.warning("Failed to embed metric %s", metric_id, exc_info=True)
+    await db.flush()
+    await db.refresh(metric)
     return metric
 
 
