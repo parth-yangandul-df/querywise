@@ -258,6 +258,13 @@ export class DashboardComponent implements OnInit {
   }
 
   logout() {
+    // Clear all chat session keys
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key && key.startsWith('qw_chat_session_id:')) {
+        sessionStorage.removeItem(key);
+      }
+    }
     sessionStorage.removeItem('qw_auth_token');
     sessionStorage.removeItem('qw_api_url');
     sessionStorage.removeItem('qw_user_role');
@@ -266,8 +273,6 @@ export class DashboardComponent implements OnInit {
   }
 
   openQueryWiseChat() {
-    const token = sessionStorage.getItem('qw_auth_token') ?? '';
-    const url = `http://localhost:5174?token=${encodeURIComponent(token)}&connection_id=${encodeURIComponent(this.connectionId)}`;
-    window.open(url, '_blank');
+    this.router.navigate(['/chat'], { queryParams: { connection_id: this.connectionId } });
   }
 }

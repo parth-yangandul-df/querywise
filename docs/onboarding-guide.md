@@ -129,12 +129,12 @@ The frontend will start at `http://localhost:5173`.
 In another new terminal:
 
 ```bash
-cd chatbot-frontend
+cd angular-test
 npm install
-npm run dev
+npm run start
 ```
 
-The chatbot frontend will start at `http://localhost:5174`.
+The Angular chat will start at `http://localhost:4200`.
 
 ---
 
@@ -145,7 +145,7 @@ After starting all services, access QueryWise at:
 | Service | URL | Description |
 |---------|-----|------------|
 | Frontend (Mantine) | http://localhost:5173 | Main admin UI |
-| Chatbot UI | http://localhost:5174 | Chat interface |
+| Angular Chat | http://localhost:4200 | Chat interface |
 | Backend API | http://localhost:8000 | REST API |
 | API Docs | http://localhost:8000/docs | OpenAPI documentation |
 | Health Check | http://localhost:8000/api/v1/health | Liveness probe |

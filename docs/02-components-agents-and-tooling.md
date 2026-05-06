@@ -355,11 +355,11 @@ Required methods: `complete(messages)`, `embed(text)`.
 - `frontend/src/components/layout/` — AppShell with sidebar navigation
 - `frontend/src/types/` — TypeScript interfaces matching backend schemas
 
-### Chatbot Frontend (`chatbot-frontend/`)
+### Angular Chat (`angular-test/`)
 
-**Tech:** React 19, TypeScript, Vite
+**Tech:** Angular 21, TypeScript
 
-End-user chat interface. Communicates with the backend `POST /api/v1/query` endpoint. Maintains session state and renders conversation history.
+End-user chat interface. Communicates with the backend `POST /api/v1/query/stream` endpoint. Maintains session state and renders conversation history.
 
 ---
 

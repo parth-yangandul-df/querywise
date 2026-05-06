@@ -13,9 +13,9 @@ QueryWise is a natural-language-to-SQL system with a semantic metadata layer. Us
 │                        Docker Compose                       │
 │                                                             │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │
-│  │   frontend   │  │  chatbot-    │  │     backend      │  │
-│  │  :5173       │  │  frontend    │  │     :8000        │  │
-│  │  (admin UI)  │  │  :5174       │  │   (FastAPI)      │  │
+│  │   frontend   │  │  angular-    │  │     backend      │  │
+│  │  :5173       │  │  test        │  │     :8000        │  │
+│  │  (admin UI)  │  │  :4200       │  │   (FastAPI)      │  │
 │  └──────────────┘  └──────────────┘  └────────┬─────────┘  │
 │                                               │             │
 │                         ┌─────────────────────┘             │
@@ -39,7 +39,7 @@ External:
 |---|---|---|
 | `backend` | 8000 | FastAPI REST API |
 | `frontend` | 5173 | Admin/management UI (connections, glossary, metrics, etc.) |
-| `chatbot-frontend` | 5174 | End-user chat interface |
+| `angular-test` | 4200 | End-user chat interface |
 | `app-db` | 5432 (internal) | QueryWise metadata DB (pgvector) |
 
 ---

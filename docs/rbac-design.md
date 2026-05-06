@@ -277,7 +277,7 @@ sessionStorage.setItem('qw_auth_token', jwtFromLogin)
 
 ### Recent questions isolation
 
-The chatbot widget's "recent questions" list (`chatbot-frontend/src/components/widget/RecentQuestions.tsx`) uses a per-user localStorage key:
+The Angular chat's "recent questions" list (`angular-test/src/app/services/chat.service.ts`) uses a per-user sessionStorage key:
 
 ```
 qw_recent_questions_<user-uuid>

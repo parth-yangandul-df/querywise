@@ -47,6 +47,6 @@ Welcome to QueryWise! This document provides an index of all available documenta
 ## Quick Links
 
 - **Frontend:** http://localhost:5173
-- **Chatbot UI:** http://localhost:5174
+- **Angular Chat:** http://localhost:4200
 - **Backend API:** http://localhost:8000
 - **API Docs:** http://localhost:8000/docs

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from app.llm.base_provider import BaseLLMProvider, LLMConfig, LLMMessage
 from app.llm.prompts.interpreter_prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
+from app.llm.tracing import traceable
 from app.llm.utils import repair_json
 
 
@@ -35,6 +36,7 @@ class ResultInterpreterAgent:
         self.provider = provider
         self.config = config
 
+    @traceable(name="agent.interpret_results")
     async def interpret(
         self,
         question: str,

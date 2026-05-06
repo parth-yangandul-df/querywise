@@ -62,7 +62,7 @@ curl http://localhost:8000/api/v1/ready     # Should return 200
 | Service | URL | Status Check |
 |---------|-----|-------------|
 | Frontend (Mantine) | http://localhost:5173 | `/api/v1/health` |
-| Chatbot UI | http://localhost:5174 | `/api/v1/health` |
+| Angular Chat | http://localhost:4200 | `/api/v1/health` |
 | Backend API | http://localhost:8000 | `/api/v1/health` |
 | API Docs | http://localhost:8000/docs | Swagger UI |
 

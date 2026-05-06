@@ -14,7 +14,7 @@
 | App | Technology | Port |
 |-----|-----------|------|
 | Main UI | React 19 + TypeScript + Mantine UI | 5173 |
-| Chatbot UI | React 19 + Tailwind + shadcn/ui | 5174 |
+| Chat UI | Angular 21 | 4200 |
 
 ## LLM + Embeddings (OpenRouter Only)
 | Use | Model | Config |
@@ -60,6 +60,6 @@ cd backend && uvicorn app.main:app --reload
 # Frontend
 cd frontend && npm run dev
 
-# Chatbot UI
-cd chatbot-frontend && npm run dev
+# Angular Chat
+cd angular-test && npm run start
 ```

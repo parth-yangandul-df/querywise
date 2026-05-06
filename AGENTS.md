@@ -8,7 +8,7 @@ QueryWise — a text-to-SQL application with a semantic metadata layer. Users as
 
 - **Backend:** Python 3.12+, FastAPI, SQLAlchemy (async), asyncpg, pgvector, Alembic, LangGraph
 - **Frontend:** React 19, TypeScript, Vite, Mantine UI, React Query, React Router (port 5173)
-- **Chatbot Frontend:** React 19 with Tailwind CSS, shadcn/ui components (port 5174)
+- **Chat UI:** Angular 21 (port 4200)
 - **Databases:** PostgreSQL 16 with pgvector (app metadata), target DBs via PostgreSQL/SQL Server connectors
 - **LLM:** Provider-agnostic — Anthropic, OpenAI, Ollama, OpenRouter, Groq
 
@@ -19,7 +19,7 @@ QueryWise — a text-to-SQL application with a semantic metadata layer. Users as
 docker compose up
 
 # Frontend:      http://localhost:5173
-# Chatbot UI:    http://localhost:5174
+# Chat UI:       http://localhost:4200
 # Backend:       http://localhost:8000
 # API docs:      http://localhost:8000/docs
 ```
@@ -49,13 +49,12 @@ npm run build                         # Production build (tsc + vite)
 npm run lint                          # ESLint
 ```
 
-Run from `chatbot-frontend/`:
+Run from `angular-test/`:
 
 ```bash
 npm install                           # Install deps
-npm run dev                           # Dev server on :5174
-npm run build                         # Production build (tsc + vite)
-npm run lint                          # ESLint
+npm run start                         # Dev server on :4200
+npm run build                         # Production build
 ```
 
 ## Code Style
@@ -89,7 +88,7 @@ backend/app/
 └── utils/               # SQL sanitizer
 
 frontend/src/            # Mantine UI (port 5173)
-chatbot-frontend/src/    # React + Tailwind + shadcn/ui (port 5174)
+angular-test/src/       # Angular 21 chat UI (port 4200)
 ```
 
 ## Environment Variables
@@ -101,7 +100,7 @@ chatbot-frontend/src/    # React + Tailwind + shadcn/ui (port 5174)
 | `DEFAULT_LLM_PROVIDER` | `openrouter` | LLM provider (`anthropic`, `openai`, `ollama`, `openrouter`, `groq`) |
 | `DEFAULT_LLM_MODEL` | `deepseek/deepseek-v3.2` | Default model for SQL generation. **Ignored when `DEFAULT_LLM_PROVIDER=openrouter`** — use `OPENROUTER_MODEL`, `RESOLVER_MODEL`, `INTERPRETER_MODEL` instead. |
 | `EMBEDDING_MODEL` | `openai/text-embedding-3-small` | Embedding model (used with OpenAI, OpenRouter, or when `EMBEDDING_PROVIDER=openai`) |
-| `CORS_ORIGINS` | `["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:4200", "http://localhost:4000"]` | Allowed CORS origins |
+| `CORS_ORIGINS` | `["http://localhost:5173", "http://localhost:5175", "http://localhost:4200"]` | Allowed CORS origins |
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama server URL |
 | `OLLAMA_MODEL` | `llama3.1:8b` | Ollama model for completions |
 | `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Ollama model for embeddings (only when using Ollama for embeddings) |

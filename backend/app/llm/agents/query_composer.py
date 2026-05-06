@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from app.llm.base_provider import BaseLLMProvider, LLMConfig, LLMMessage
 from app.llm.prompts.composer_prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
+from app.llm.tracing import traceable
 from app.llm.utils import repair_json
 
 
@@ -22,6 +23,7 @@ class QueryComposerAgent:
         self.provider = provider
         self.config = config
 
+    @traceable(name="agent.compose_sql")
     async def compose(
         self,
         question: str,

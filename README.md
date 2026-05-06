@@ -9,8 +9,9 @@ A full-stack application that translates natural language questions into SQL que
 │        FRONTEND (React + TypeScript)        │
 │  Query Interface │ Semantic Layer Mgmt UI   │
 │  Mantine UI (port 5173)                     │
+│  Angular Chat (port 4200)                    │
 └────────────────────┬────────────────────────┘
-                      │ REST API
+                       │ REST API
 ┌────────────────────▼────────────────────────┐
 │           BACKEND (FastAPI)                 │
 │                                             │
@@ -33,8 +34,6 @@ A full-stack application that translates natural language questions into SQL que
 │  └─────────────────────────────────────┘    │
 └─────────────────────────────────────────────┘
 ```
-
-**Also available:** Chatbot UI (React + Tailwind + shadcn/ui) at http://localhost:5174
 
 ## Features
 
@@ -80,7 +79,7 @@ docker compose up
 | Service | URL |
 |---------|-----|
 | Frontend (Mantine) | http://localhost:5173 |
-| Chatbot UI | http://localhost:5174 |
+| Angular Chat | http://localhost:4200 |
 | Backend API | http://localhost:8000 |
 | API Docs (Swagger) | http://localhost:8000/docs |
 | App Database (pgvector) | localhost:5434 |
@@ -124,7 +123,7 @@ The backend auto-injects the best available SQL Server ODBC driver if the connec
 
 ### First Steps
 
-1. Open http://localhost:5173 (or the Chatbot UI at http://localhost:5174)
+1. Open http://localhost:5173 (or Angular Chat at http://localhost:4200)
 2. Add a database connection and run schema introspection
 3. Ask a natural language query against your connected database
 
@@ -203,16 +202,16 @@ npm install
 npm run dev
 ```
 
-### Chatbot Frontend
+### Angular Chat (Alternative UI)
 
 ```bash
-cd chatbot-frontend
+cd angular-test
 
 # Install dependencies
 npm install
 
-# Start dev server on port 5174
-npm run dev
+# Start dev server on port 4200
+npm run start
 ```
 
 ### Database Setup
@@ -234,7 +233,7 @@ For development, `docker compose up app-db` starts the app database without the 
 | `ENVIRONMENT` | `development` | Environment name |
 | `DEBUG` | `false` | Enable debug mode |
 | `ENCRYPTION_KEY` | `dev-encryption-key-change-in-production` | Fernet key for encrypting stored connection strings |
-| `CORS_ORIGINS` | `["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:4200", "http://localhost:4000"]` | Allowed CORS origins (JSON list) |
+| `CORS_ORIGINS` | `["http://localhost:5173", "http://localhost:5175", "http://localhost:4200"]` | Allowed CORS origins (JSON list) |
 | `DEFAULT_LLM_PROVIDER` | `openrouter` | Default LLM provider (`anthropic`, `openai`, `ollama`, `openrouter`, `groq`) |
 | `DEFAULT_LLM_MODEL` | `deepseek/deepseek-v3.2` | Default model for SQL generation |
 | `EMBEDDING_MODEL` | `openai/text-embedding-3-small` | Model for generating embeddings (used with OpenAI provider or `EMBEDDING_PROVIDER=openrouter`) |
@@ -349,14 +348,7 @@ querywise/
 │   │   └── utils/
 │   └── package.json
 │
-├── chatbot-frontend/           # React + Tailwind + shadcn/ui (port 5174)
-│   ├── src/
-│   │   ├── components/
-│   │   ├── hooks/
-│   │   └── utils/
-│   └── package.json
-│
-├── angular-test/               # Angular 21 test application
+├── angular-test/               # Angular 21 chat application
 │   └── src/
 │
 ├── docker-compose.yml        # Docker composition file

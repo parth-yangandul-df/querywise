@@ -1,0 +1,250 @@
+<div class="chat-page">
+  <!-- Top Bar -->
+  <header class="chat-topbar">
+    <div class="topbar-left">
+      <div class="brand">
+        <div class="logo">QW</div>
+        <span class="brand-name">QueryWise</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button class="btn-reset" (click)="resetChat()" title="Reset chat">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+          <path d="M3 3v5h5"/>
+        </svg>
+        New Chat
+      </button>
+    </div>
+  </header>
+
+  <!-- Messages Area -->
+  <div class="messages-container" #messagesContainer>
+    @if (messages().length === 0) {
+      <!-- Welcome Screen -->
+      <div class="welcome-screen">
+        <div class="welcome-content">
+          <div class="welcome-icon">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" x2="12" y1="19" y2="22"/>
+            </svg>
+          </div>
+          <h1 class="welcome-title">How can I help you?</h1>
+          <p class="welcome-subtitle">
+            Ask questions about your data in plain English. I'll generate SQL, execute it, and explain the results.
+          </p>
+
+          @if (recentQuestions().length > 0) {
+            <div class="recent-questions">
+              <p class="recent-label">Recent questions</p>
+              <div class="recent-list">
+                @for (q of recentQuestions(); track q) {
+                  <button class="recent-btn" (click)="selectRecentQuestion(q)">
+                    {{ q }}
+                  </button>
+                }
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+    } @else {
+      <div class="messages-list">
+        @for (msg of messages(); track trackByMessage($index, msg)) {
+          @if (msg.role === 'user') {
+            <div class="message user-message">
+              <div class="message-content">
+                {{ msg.content }}
+              </div>
+              <div class="message-avatar user-avatar">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                  <circle cx="12" cy="7" r="4"/>
+                </svg>
+              </div>
+            </div>
+          } @else if (msg.role === 'assistant' && msg.result) {
+            <div class="message assistant-message">
+              <div class="message-avatar bot-avatar">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                </svg>
+              </div>
+              <div class="message-content">
+                <!-- Primary text -->
+                @if (msg.result.clarification_message || msg.result.summary) {
+                  <p class="result-text">
+                    {{ msg.result.clarification_message || msg.result.summary }}
+                  </p>
+                }
+
+                <!-- Highlights -->
+                @if (msg.result.highlights.length > 0) {
+                  <div class="highlights">
+                    @for (h of msg.result.highlights; track h) {
+                      <span class="highlight-tag">{{ h }}</span>
+                    }
+                  </div>
+                }
+
+                <!-- Clarification options (not follow-ups) -->
+                @if (msg.result.clarification_options.length > 0) {
+                  <div class="suggestion-chips">
+                    @for (opt of msg.result.clarification_options; track opt) {
+                      <button class="chip">{{ opt }}</button>
+                    }
+                  </div>
+                }
+
+                <!-- Metadata -->
+                <div class="result-meta">
+                  <span>{{ msg.result.row_count }} rows</span>
+                  <span>·</span>
+                  <span>{{ msg.result.execution_time_ms }}ms</span>
+                  @if (msg.result.retry_count > 0) {
+                    <span>·</span>
+                    <span class="retry-badge">{{ msg.result.retry_count }} retries</span>
+                  }
+                </div>
+
+                <!-- Result Table -->
+                @if (msg.result.rows.length > 0) {
+                  <div class="result-table-wrapper">
+                    <table class="result-table">
+                      <thead>
+                        <tr>
+                          @for (col of msg.result.columns; track col) {
+                            <th>{{ col }}</th>
+                          }
+                        </tr>
+                      </thead>
+                      <tbody>
+                        @for (row of msg.result.rows; track $index) {
+                          <tr>
+                            @for (cell of row; track $index) {
+                              <td>
+                                @if (cell === null || cell === undefined) {
+                                  <span class="null-value">null</span>
+                                } @else {
+                                  {{ cell }}
+                                }
+                              </td>
+                            }
+                          </tr>
+                        }
+                      </tbody>
+                    </table>
+                    @if (msg.result.truncated) {
+                      <p class="truncated-notice">Results truncated — export CSV for full data</p>
+                    }
+                  </div>
+                }
+
+                <!-- SQL Block -->
+                @if (msg.result.final_sql) {
+                  <div class="sql-block">
+                    <button class="sql-toggle" (click)="toggleSql(msg.result!.id)">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                      </svg>
+                      View generated SQL
+                      @if (sqlExpanded()[msg.result.id]) {
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <polyline points="18 15 12 9 6 15"/>
+                        </svg>
+                      } @else {
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <polyline points="6 9 12 15 18 9"/>
+                        </svg>
+                      }
+                    </button>
+                    @if (sqlExpanded()[msg.result.id]) {
+                      <div class="sql-content">
+                        <pre>{{ msg.result.final_sql }}</pre>
+                        <button class="copy-btn" (click)="copySql(msg.result!.final_sql!, msg.result!.id)">
+                          @if (copiedSql() === msg.result.id) {
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <polyline points="20 6 9 17 4 12"/>
+                            </svg>
+                          } @else {
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                            </svg>
+                          }
+                        </button>
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            </div>
+          } @else if (msg.role === 'error') {
+            <div class="message error-message">
+              <div class="message-avatar error-avatar">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" x2="12" y1="8" y2="12"/>
+                  <line x1="12" x2="12.01" y1="16" y2="16"/>
+                </svg>
+              </div>
+              <div class="message-content">
+                <p class="error-title">Error</p>
+                <p class="error-text">{{ msg.errorMessage }}</p>
+              </div>
+            </div>
+          }
+        }
+
+        <!-- Typing Indicator -->
+        @if (isLoading() && pipelineStage()) {
+          <div class="message typing-message">
+            <div class="message-avatar bot-avatar">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              </svg>
+            </div>
+            <div class="message-content typing-content">
+              <div class="typing-indicator">
+                <div class="spinner"></div>
+                <div class="progress-bar">
+                  <div class="progress-fill" [style.width.%]="pipelineStage()!.progress"></div>
+                </div>
+                <span class="stage-label">{{ getStageLabel(pipelineStage()!.stage) }}</span>
+              </div>
+            </div>
+          </div>
+        }
+      </div>
+    }
+  </div>
+
+  <!-- Input Area -->
+  <div class="input-area">
+    <div class="input-container">
+      <textarea
+        #inputField
+        [(ngModel)]="input"
+        (keydown)="onKeyDown($event)"
+        placeholder="Ask a question about your data..."
+        rows="1"
+        [disabled]="isLoading()"
+      ></textarea>
+      <button
+        class="send-btn"
+        (click)="sendMessage()"
+        [disabled]="!input.trim() || isLoading()"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="22" x2="11" y1="2" y2="13"/>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+        </svg>
+      </button>
+    </div>
+    <p class="input-hint">Press Enter to send · Shift+Enter for new line</p>
+  </div>
+</div>
