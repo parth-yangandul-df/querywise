@@ -1,0 +1,46 @@
+name: Deploy Backend to Lightsail
+
+on:
+  push:
+    branches:
+      - devops  
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Lightsail via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # 1. Navigate to project folder
+            cd ~/sql-chat-app/backend
+
+            # 2. Pull latest changes
+            git pull origin devops
+
+            # 3. Re-create .env file from GitHub Secrets (optional but recommended)
+            echo "${{ secrets.ENV_FILE }}" > .env
+
+            # 4. Activate Virtual Env and Update Dependencies
+            source venv/bin/activate
+            pip install --upgrade pip
+            pip install . --force-reinstall
+            pip install asyncpg PyJWT  # Ensuring critical drivers are present
+
+            # 5. Run Database Migrations
+            export PYTHONPATH=$PYTHONPATH:$(pwd)
+            alembic upgrade head
+
+            # 6. Restart the Application using PM2
+            pm2 restart sql-chat || pm2 start "venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000" --name "sql-chat"
+            
+            # 7. Save PM2 state
+            pm2 save
