@@ -17,6 +17,7 @@ from app.llm.agents.result_interpreter import ResultInterpreterAgent, format_sin
 from app.llm.graph.graph import get_compiled_graph
 from app.llm.graph.state import GraphState
 from app.llm.router import route_for_role
+from app.llm.tracing import trace_span
 from app.semantic.context_builder import build_context
 from app.services.connection_service import get_connection, get_decrypted_connection_string
 from app.utils.sql_sanitizer import check_sql_safety
@@ -87,7 +88,35 @@ async def execute_nl_query(
         "event_queue": event_queue,
     }
 
-    final_state = await get_compiled_graph().ainvoke(initial_state)
+    with trace_span(
+        "query.execute_nl_query",
+        run_type="chain",
+        inputs={
+            "connection_id": str(connection_id),
+            "question": question,
+            "session_id": str(session_id) if session_id else None,
+            "clear_context": clear_context,
+            "user_id": str(current_user.id) if current_user else None,
+            "user_role": current_user.role if current_user else None,
+        },
+        metadata={
+            "connector_type": conn.connector_type,
+            "max_rows": conn.max_rows,
+            "timeout_seconds": conn.max_query_timeout_seconds,
+        },
+    ) as trace:
+        final_state = await get_compiled_graph().ainvoke(initial_state)
+        if trace is not None:
+            result = final_state.get("result")
+            trace.end(
+                outputs={
+                    "action": final_state.get("action"),
+                    "execution_id": final_state.get("execution_id"),
+                    "has_sql": bool(final_state.get("sql") or final_state.get("generated_sql")),
+                    "row_count": result.row_count if result else 0,
+                    "error": final_state.get("error"),
+                }
+            )
 
     # Auto-set session title from first question
     if session_id and not clear_context:
@@ -218,7 +247,7 @@ async def execute_raw_sql(
             timeout_seconds=conn.max_query_timeout_seconds,
             max_rows=conn.max_rows,
         )
-    except Exception:
+    except Exception as err:
         # Log internally - never expose to client
         logger.error("Query execution failed: %s", exc_info=True)
         execution = QueryExecution(
@@ -232,12 +261,11 @@ async def execute_raw_sql(
         )
         db.add(execution)
         await db.flush()
-        raise AppError("Query execution failed. Please try again.")
+        raise AppError("Query execution failed. Please try again.") from err
 
     # Step 3: Interpret results (LLM summary + follow-ups)
     summary = None
     highlights = []
-    followups = []
     llm_provider_name = "manual"
     llm_model_name = "manual"
 

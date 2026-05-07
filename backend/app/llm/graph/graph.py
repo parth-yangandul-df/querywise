@@ -81,30 +81,19 @@ from app.llm.graph.nodes.result_interpreter import interpret_result
 from app.llm.graph.nodes.similarity_check import route_after_similarity, similarity_check
 from app.llm.graph.nodes.validate_sql import route_after_validate, validate_sql
 from app.llm.graph.state import GraphState
+from app.llm.tracing import configure_langsmith
 
 logger = logging.getLogger(__name__)
 
 _compiled_graph: Any = None
-_langsmith_checkpointer: Any = None
 
 
 def _setup_langsmith_tracing() -> None:
     """Initialize LangSmith tracing on startup."""
-    global _langsmith_checkpointer
-
     if not settings.langsmith_tracing_enabled or not settings.langsmith_api_key:
         return
 
-    try:
-        from langgraph.checkpoint.postgres import PostgresSaver  # type: ignore[import-not-found]
-
-        _langsmith_checkpointer = PostgresSaver.from_conn_string(
-            settings.database_url.replace("+asyncpg", ""),
-        )
-        _langsmith_checkpointer.setup()
-        logger.info("LangSmith tracing enabled for project: %s", settings.langsmith_project)
-    except Exception:
-        logger.warning("Failed to setup LangSmith tracing: %s", exc_info=True)
+    configure_langsmith()
 
 
 def _build_graph(checkpointer: Any | None = None) -> Any:
@@ -216,5 +205,5 @@ def get_compiled_graph():
     """Return the compiled graph singleton. Thread-safe after first call."""
     global _compiled_graph
     if _compiled_graph is None:
-        _compiled_graph = _build_graph(checkpointer=_langsmith_checkpointer)
+        _compiled_graph = _build_graph()
     return _compiled_graph
