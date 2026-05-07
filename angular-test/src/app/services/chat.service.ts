@@ -1,6 +1,8 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { Router } from '@angular/router';
 
+import { getRuntimeApiUrl } from '../utils/api';
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'error';
@@ -41,7 +43,7 @@ export interface QueryStageEvent {
   providedIn: 'root'
 })
 export class ChatService {
-  private apiUrl = 'http://localhost:8000';
+  private apiUrl = getRuntimeApiUrl();
   private sessionKeyPrefix = 'qw_chat_session_id:';
 
   messages = signal<ChatMessage[]>([]);

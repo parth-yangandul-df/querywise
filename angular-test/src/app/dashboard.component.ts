@@ -1,5 +1,7 @@
 import { Component, OnInit, signal } from '@angular/core';
 import { Router } from '@angular/router';
+
+import { getRuntimeApiUrl } from './utils/api';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 
@@ -238,7 +240,7 @@ export class DashboardComponent implements OnInit {
   }
 
   private async loadConnections() {
-    const apiUrl = sessionStorage.getItem('qw_api_url') ?? 'http://localhost:8000';
+    const apiUrl = getRuntimeApiUrl();
     const token  = sessionStorage.getItem('qw_auth_token') ?? '';
     try {
       const res = await fetch(`${apiUrl}/api/v1/connections`, {

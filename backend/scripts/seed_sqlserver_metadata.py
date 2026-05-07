@@ -8,43 +8,45 @@ This script populates the four layers of the semantic layer:
   3. Dictionary — raw column values → human-readable labels
   4. Knowledge  — free-text business context documents
 
+This script connects DIRECTLY to the PostgreSQL app DB using DATABASE_URL
+from .env — it does NOT use the REST API.
+
+Required .env vars:
+    DATABASE_URL          — PostgreSQL connection string (e.g. postgresql+psycopg://...)
+    SEED_CONNECTION_NAME  — Name of the SQL Server connection in QueryWise
+
 Usage:
     # From the repo root, while docker compose is running:
     docker compose exec backend python scripts/seed_sqlserver_metadata.py
 
-    # Or locally (needs httpx):
-    pip install httpx
+    # Or locally:
+    pip install -e ".[dev]"
     python backend/scripts/seed_sqlserver_metadata.py
 
-    # Target a different backend URL:
-    python backend/scripts/seed_sqlserver_metadata.py --base-url http://localhost:8000
-
-    # Target a specific connection by name (default: picks the first sqlserver connection):
-    python backend/scripts/seed_sqlserver_metadata.py --connection-name "My Azure DB"
+    # Edit .env to set SEED_CONNECTION_NAME
 
 HOW TO FILL THIS IN:
     1. Run introspection in the UI (Connections → introspect icon) so your
        tables and columns are cached.
     2. Edit GLOSSARY_TERMS, METRICS, DICTIONARY_ENTRIES, and KNOWLEDGE_DOCS
        below to match your schema.
-    3. Run this script — it is idempotent-safe (will report errors on duplicate
-       unique constraint violations but won't crash).
+    3. Run this script — it is idempotent-safe (INSERT ... ON CONFLICT DO UPDATE).
 
 DICTIONARY ENTRIES NOTE:
     Dictionary entries are keyed by (table_name, column_name). The table_name
-    must match exactly what was introspected (case-sensitive). Run:
-        GET /api/v1/connections/{id}/tables
-    to see the exact table names that were cached.
+    must match exactly what was introspected (case-sensitive). Run introspection
+    first so cached_columns is populated.
 """
 
 from __future__ import annotations
 
-import argparse
+import json
 import sys
+from pathlib import Path
+from uuid import UUID
 
-import httpx
-
-API_PREFIX = "/api/v1"
+import psycopg
+from dotenv import dotenv_values, find_dotenv
 
 
 # =============================================================================
@@ -65,15 +67,14 @@ GLOSSARY_TERMS: list[dict] = [
         "definition": "An individual employee or workforce member who performs tasks and logs work in the system.",
         "sql_expression": "Resource.ResourceId",
         "related_tables": ["Resource"],
-        "related_columns": ["Resource.ResourceId"],
-        "examples": ["SELECT * FROM Resource WHERE IsActive = 1"],
+        "related_columns": ["Resource.ResourceId"]
     },
     {
         "term": "Active Resource",
         "definition": "A resource who is currently active and part of the organization.",
-        "sql_expression": "CASE WHEN Resource.IsActive = 1 THEN 1 ELSE 0 END",
-        "related_tables": ["Resource"],
-        "related_columns": ["Resource.IsActive"],
+        "sql_expression": "CASE WHEN Resource.IsActive = 1 AND Resource.StatusId IN (SELECT StatusId FROM Status WHERE StatusName = 'Active')",
+        "related_tables": ["Resource", "Status"],
+        "related_columns": ["Resource.IsActive", "Resource.StatusId", "Status.StatusId", "Status.StatusName"],
     },
     {
         "term": "Employee ID",
@@ -1514,37 +1515,21 @@ For manager names in a self-join, use Manager.ResourceName (with alias).
 SAMPLE_QUERIES: list[dict] = [
     {
         "natural_language": "How many active resources are in the organization?",
-        "sql_query": "SELECT COUNT(*) FROM Resource WHERE IsActive = 1",
-        "description": "Total active workforce",
-        "tags": ["resource"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "How many clients exist in the system?",
-        "sql_query": "SELECT COUNT(*) FROM Client",
-        "description": "Total clients",
-        "tags": ["client"],
+        "sql_query": "SELECT COUNT(*) AS ActiveResourceCount FROM Resource WHERE IsActive = 1",
+        "description": "Baseline active workforce count",
+        "tags": ["resource", "active"],
         "is_validated": True,
     },
     {
         "natural_language": "How many projects are currently active?",
-        "sql_query": "SELECT COUNT(*) FROM Project WHERE IsActive = 1",
+        "sql_query": """SELECT count(*) FROM Project p
+        JOIN Client c ON p.ClientId = c.ClientId
+        JOIN Status s ON s.StatusId = p.ProjectStatusId
+        JOIN Resource r ON r.ResourceId = p.ProjectManagerId
+		where (p.EndDate>getdate() or EndDate is null)
+		and s.StatusName = 'Active'""",
         "description": "Active projects count",
         "tags": ["project"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the total number of timesheet entries?",
-        "sql_query": "SELECT COUNT(*) FROM TS_EODDetails WHERE IsDeleted = 0",
-        "description": "Total timesheet logs",
-        "tags": ["timesheet"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the total number of hours logged in the system?",
-        "sql_query": "SELECT SUM(Hrs) FROM TS_EODDetails WHERE IsDeleted = 0",
-        "description": "Total effort logged",
-        "tags": ["timesheet"],
         "is_validated": True,
     },
     {
@@ -1556,7 +1541,7 @@ SAMPLE_QUERIES: list[dict] = [
     },
     {
         "natural_language": "How many projects are mapped to each client?",
-        "sql_query": "SELECT c.ClientName, COUNT(p.ProjectId) as Count FROM Client c JOIN Project p ON c.ClientId = p.ClientId GROUP BY c.ClientName",
+        "sql_query": "SELECT c.ClientName, COUNT(p.ProjectId) as Count FROM Client c JOIN Project p ON c.ClientId = p.ClientId where p.IsActive=1 and p.ProjectStatusId=4 GROUP BY c.ClientName",
         "description": "Projects per client",
         "tags": ["client", "project"],
         "is_validated": True,
@@ -1598,14 +1583,25 @@ SAMPLE_QUERIES: list[dict] = [
     },
     {
         "natural_language": "How many resources are on bench?",
-        "sql_query": "SELECT COUNT(*) FROM ProjectResource WHERE Bench = 1 AND IsActive = 1",
+        "sql_query": """select 
+    count(*)
+    from ProjectResource pr
+    join project p on p.ProjectId  = pr.ProjectId
+    join resource r on r.ResourceId=pr.ResourceId
+    join Resource pm on r.ReportingTo = pm.ResourceId
+    where p.ProjectName = 'DF-Bench'
+    and pr.percentageallocation>1
+    AND pr.IsActive = 1
+    AND pr.AssignmentDate <= GETDATE()
+    AND r.IsActive = 1
+    AND r.StatusId = 8""",
         "description": "Unallocated resources",
         "tags": ["resource", "bench"],
         "is_validated": True,
     },
     {
         "natural_language": "What is the average allocation percentage per project?",
-        "sql_query": "SELECT p.ProjectName, AVG(pr.PercentageAllocation) FROM Project p JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId GROUP BY p.ProjectName",
+        "sql_query": "SELECT p.ProjectName, AVG(pr.PercentageAllocation) as [Average Allocation in (%)] FROM Project p JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId GROUP BY p.ProjectName having AVG(pr.PercentageAllocation)>1",
         "description": "Allocation efficiency",
         "tags": ["project", "allocation"],
         "is_validated": True,
@@ -1618,20 +1614,6 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "Which projects have no timesheet entries?",
-        "sql_query": "SELECT p.ProjectName FROM Project p LEFT JOIN TS_EODDetails e ON p.ProjectName = e.Project WHERE e.ID IS NULL",
-        "description": "Inactive projects",
-        "tags": ["project"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources have not logged any hours?",
-        "sql_query": "SELECT r.ResourceName FROM Resource r LEFT JOIN TS_EODDetails e ON r.ResourceId = e.ResourceId WHERE e.ID IS NULL",
-        "description": "Inactive resources",
-        "tags": ["resource"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "What is the total billable hours per client?",
         "sql_query": "SELECT e.ClientName, SUM(e.Hrs) FROM TS_EODDetails e JOIN TS_Activity a ON e.Activity_Id = a.Id WHERE a.Billablestatus = 1 GROUP BY e.ClientName",
         "description": "Client billing",
@@ -1640,72 +1622,42 @@ SAMPLE_QUERIES: list[dict] = [
     },
     {
         "natural_language": "What is the billable utilization percentage per resource?",
-        "sql_query": "SELECT r.ResourceName, SUM(CASE WHEN a.Billablestatus = 1 THEN e.Hrs ELSE 0 END) * 100.0 / SUM(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId JOIN TS_Activity a ON e.Activity_Id = a.Id GROUP BY r.ResourceName",
+        "sql_query": """SELECT r.ResourceName,
+       SUM(CASE WHEN a.Billablestatus = 1 THEN e.Hrs ELSE 0 END) * 100.0
+           / NULLIF(SUM(e.Hrs), 0) AS BillableUtilizationPercent
+        FROM TS_EODDetails e
+        JOIN Resource r ON e.ResourceId = r.ResourceId
+        JOIN TS_Activity a ON e.Activity_Id = a.Id
+        WHERE e.IsDeleted = 0
+        AND e.IsApproved = 1
+        GROUP BY r.ResourceName
+        ORDER BY BillableUtilizationPercent DESC""",
         "description": "Resource utilization",
         "tags": ["resource", "utilization"],
         "is_validated": True,
     },
     {
         "natural_language": "Which clients generate the highest revenue based on billable hours?",
-        "sql_query": "SELECT e.ClientName, SUM(e.Hrs * c.HourlyBillingRate) as [Total Revenue] FROM TS_EODDetails e JOIN Client c ON e.ClientName = c.ClientName JOIN TS_Activity a ON e.Activity_Id = a.Id WHERE a.Billablestatus = 1 GROUP BY e.ClientName ORDER BY 2 DESC",
+        "sql_query": """
+                    SELECT e.ClientName, SUM(e.Hrs * c.HourlyBillingRate) AS TotalRevenue
+                    FROM TS_EODDetails e
+                    JOIN Client c ON e.ClientName = c.ClientName
+                    JOIN TS_Activity a ON e.Activity_Id = a.Id
+                    WHERE e.IsDeleted = 0
+                    AND e.IsApproved = 1
+                    AND a.Billablestatus = 1
+                    GROUP BY e.ClientName
+                    ORDER BY TotalRevenue DESC
+                    """,
         "description": "Revenue per client",
         "tags": ["client", "revenue"],
         "is_validated": True,
     },
     {
-        "natural_language": "Which projects have more non-billable hours than billable hours?",
-        "sql_query": "SELECT e.Project FROM TS_EODDetails e JOIN TS_Activity a ON e.Activity_Id = a.Id GROUP BY e.Project HAVING SUM(CASE WHEN a.Billablestatus = 0 THEN e.Hrs ELSE 0 END) > SUM(CASE WHEN a.Billablestatus = 1 THEN e.Hrs ELSE 0 END)",
-        "description": "Loss-making projects",
-        "tags": ["project", "billing"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources are over-utilized beyond 160 hours per month?",
-        "sql_query": "SELECT r.ResourceName, SUM(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId WHERE MONTH(e.ReportDate) = MONTH(GETDATE()) GROUP BY r.ResourceName HAVING SUM(e.Hrs) > 176",
-        "description": "Over-utilized resources",
-        "tags": ["resource", "utilization"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources are under-utilized below 80 hours per month?",
-        "sql_query": "SELECT r.ResourceName, SUM(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId WHERE MONTH(e.ReportDate) = MONTH(GETDATE()) GROUP BY r.ResourceName HAVING SUM(e.Hrs) < 80",
-        "description": "Under-utilized resources",
-        "tags": ["resource", "utilization"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which clients have the highest non-billable percentage?",
-        "sql_query": "SELECT e.ClientName, SUM(CASE WHEN a.Billablestatus = 0 THEN e.Hrs ELSE 0 END) * 100.0 / SUM(e.Hrs) FROM TS_EODDetails e JOIN TS_Activity a ON e.Activity_Id = a.Id GROUP BY e.ClientName ORDER BY 2 DESC",
-        "description": "Client inefficiency",
-        "tags": ["client", "billing"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources are contributing to the most number of clients?",
-        "sql_query": "SELECT r.ResourceName, COUNT(DISTINCT e.ClientName) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY r.ResourceName ORDER BY 2 DESC",
-        "description": "Client spread",
-        "tags": ["resource", "client"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which projects have high effort but very few resources?",
-        "sql_query": "SELECT e.Project, SUM(e.Hrs), COUNT(DISTINCT e.ResourceId) FROM TS_EODDetails e GROUP BY e.Project HAVING SUM(e.Hrs) > 100 AND COUNT(DISTINCT e.ResourceId) < 2",
-        "description": "Dependency risk",
-        "tags": ["project", "risk"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "Which resources generate the highest revenue contribution?",
-        "sql_query": "SELECT r.ResourceName, SUM(e.Hrs * c.HourlyBillingRate) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId JOIN Client c ON e.ClientName = c.ClientName JOIN TS_Activity a ON e.Activity_Id = a.Id WHERE a.Billablestatus = 1 GROUP BY r.ResourceName ORDER BY 2 DESC",
+        "sql_query": "SELECT TOP 25 r.ResourceName, SUM(e.Hrs * c.HourlyBillingRate) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId JOIN Client c ON e.ClientName = c.ClientName JOIN TS_Activity a ON e.Activity_Id = a.Id WHERE a.Billablestatus = 1 GROUP BY r.ResourceName ORDER BY 2 DESC",
         "description": "Top revenue contributors",
         "tags": ["resource", "revenue"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the total effort logged per client per month?",
-        "sql_query": "SELECT      e.ClientName,      DATENAME(month, e.ReportDate) as MonthName,      YEAR(e.ReportDate) as Year,      SUM(e.Hrs) as [Total Hours]  FROM TS_EODDetails e   GROUP BY      e.ClientName,      YEAR(e.ReportDate),      DATENAME(month, e.ReportDate), -- Added the exact expression here     MONTH(e.ReportDate)            -- Kept for correct chronological sorting ORDER BY      YEAR(e.ReportDate),      MONTH(e.ReportDate);",
-        "description": "Monthly client effort trend",
-        "tags": ["client", "timesheet"],
         "is_validated": True,
     },
     {
@@ -1723,52 +1675,28 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "Which clients have the highest number of active projects?",
-        "sql_query": "SELECT c.ClientName, COUNT(p.ProjectId) FROM Client c JOIN Project p ON c.ClientId = p.ClientId WHERE p.IsActive = 1 GROUP BY c.ClientName ORDER BY 2 DESC",
-        "description": "Client engagement breadth",
-        "tags": ["client", "project"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources have logged effort across multiple business units?",
-        "sql_query": "SELECT r.ResourceName FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY r.ResourceName HAVING COUNT(DISTINCT r.BusinessUnitId) > 1",
-        "description": "Cross-BU work",
-        "tags": ["resource", "business_unit"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "What is the total effort per designation?",
-        "sql_query": "SELECT d.DesignationName, SUM(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId JOIN Designation d ON r.DesignationId = d.DesignationId GROUP BY d.DesignationName",
+        "sql_query": "SELECT d.DesignationName, SUM(e.Hrs) as TotalEffort FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId JOIN Designation d ON r.DesignationId = d.DesignationId GROUP BY d.DesignationName Order By TotalEffort desc",
         "description": "Effort by role",
         "tags": ["resource", "designation"],
         "is_validated": True,
     },
     {
-        "natural_language": "Which resources have not logged any hours in the current month?",
-        "sql_query": "SELECT r.ResourceName FROM Resource r LEFT JOIN TS_EODDetails e ON r.ResourceId = e.ResourceId AND MONTH(e.ReportDate) = MONTH(GETDATE()) WHERE e.ID IS NULL",
-        "description": "Inactive this month",
-        "tags": ["resource"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "Which projects have the highest billable to non-billable ratio?",
-        "sql_query": "SELECT e.Project, SUM(CASE WHEN a.Billablestatus = 1 THEN e.Hrs ELSE 0 END) * 1.0 / NULLIF(SUM(CASE WHEN a.Billablestatus = 0 THEN e.Hrs ELSE 0 END),0) FROM TS_EODDetails e JOIN TS_Activity a ON e.Activity_Id = a.Id GROUP BY e.Project ORDER BY 2 DESC",
+        "sql_query": """
+                    SELECT 
+                        e.Project,
+                        (SUM(CASE WHEN a.Billablestatus = 1 THEN e.Hrs ELSE 0 END) * 1.0
+                        / NULLIF(SUM(e.Hrs), 0))*100 AS billable_ratio
+                        FROM TS_EODDetails e
+                        JOIN TS_Activity a ON e.Activity_Id = a.Id
+                        join Client c on c.clientname = e.ClientName
+                        where c.IsActive=1 and c.StatusId=2
+                        GROUP BY e.Project
+                        ORDER BY billable_ratio DESC;
+                        """,
         "description": "Project efficiency",
         "tags": ["project", "billing"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources have logged hours continuously for more than 10 days?",
-        "sql_query": "SELECT r.ResourceName FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY r.ResourceName HAVING COUNT(DISTINCT e.ReportDate) > 10",
-        "description": "Continuous work streak",
-        "tags": ["resource"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the total number of distinct activities logged?",
-        "sql_query": "SELECT COUNT(DISTINCT Activity_Id) FROM TS_EODDetails",
-        "description": "Activity diversity",
-        "tags": ["activity"],
         "is_validated": True,
     },
     {
@@ -1779,73 +1707,10 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "Which resources have worked with the highest number of stakeholders' clients?",
-        "sql_query": "SELECT r.ResourceName, COUNT(DISTINCT cs.ClientId) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId JOIN Client c ON e.ClientName = c.ClientName JOIN ClientStakeholder cs ON c.ClientId = cs.ClientId GROUP BY r.ResourceName ORDER BY 2 DESC",
-        "description": "Stakeholder exposure",
-        "tags": ["resource", "client"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which projects have declining effort compared to previous month?",
-        "sql_query": "SELECT Project FROM (SELECT Project, MONTH(ReportDate) m, SUM(Hrs) hrs FROM TS_EODDetails GROUP BY Project, MONTH(ReportDate)) t GROUP BY Project HAVING MAX(CASE WHEN m = MONTH(GETDATE()) THEN hrs END) < MAX(CASE WHEN m = MONTH(GETDATE())-1 THEN hrs END)",
-        "description": "Declining engagement",
-        "tags": ["project", "trend"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "Which resources have highest variance in daily effort?",
-        "sql_query": "SELECT r.ResourceName, VAR(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY r.ResourceName ORDER BY 2 DESC",
+        "sql_query": "SELECT r.ResourceName, VAR(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId where r.isactive=1 and r.statusid=8 GROUP BY r.ResourceName HAVING VAR(e.hrs)>0 ORDER BY 2 DESC",
         "description": "Effort inconsistency",
         "tags": ["resource", "pattern"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which business units contribute most to revenue?",
-        "sql_query": "SELECT bu.BusinessUnitName, SUM(e.Hrs * c.HourlyBillingRate) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId JOIN BusinessUnit bu ON r.BusinessUnitId = bu.BusinessUnitId JOIN Client c ON e.ClientName = c.ClientName JOIN TS_Activity a ON e.Activity_Id = a.Id WHERE a.Billablestatus = 1 GROUP BY bu.BusinessUnitName ORDER BY 2 DESC",
-        "description": "Revenue by BU",
-        "tags": ["business_unit", "revenue"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources are assigned to projects but have zero allocation percentage?",
-        "sql_query": "SELECT DISTINCT r.ResourceName FROM ProjectResource pr JOIN Resource r ON pr.ResourceId = r.ResourceId WHERE pr.PercentageAllocation = 0",
-        "description": "Invalid allocation",
-        "tags": ["resource", "allocation"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which clients have the highest effort per stakeholder?",
-        "sql_query": "SELECT c.ClientName, SUM(e.Hrs) * 1.0 / COUNT(cs.StakeholderId) FROM Client c JOIN TS_EODDetails e ON c.ClientName = e.ClientName JOIN ClientStakeholder cs ON c.ClientId = cs.ClientId GROUP BY c.ClientName",
-        "description": "Stakeholder load",
-        "tags": ["client"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources have highest number of distinct activity types?",
-        "sql_query": "SELECT r.ResourceName, COUNT(DISTINCT e.Activity_Id) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY r.ResourceName ORDER BY 2 DESC",
-        "description": "Skill diversity proxy",
-        "tags": ["resource"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which projects have effort logged but zero completion percentage?",
-        "sql_query": "SELECT e.Project FROM TS_EODDetails e GROUP BY e.Project HAVING SUM(e.Hrs) > 0 AND AVG(CAST(e.CompletionPercent AS FLOAT)) = 0",
-        "description": "Execution gap",
-        "tags": ["project"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "How many active resources are currently in the organization?",
-        "sql_query": "SELECT COUNT(*) FROM Resource WHERE IsActive = 1;",
-        "description": "Gives total active employees/resources.",
-        "tags": ["resource", "headcount", "active"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the distribution of resources across business units?",
-        "sql_query": "SELECT bu.BusinessUnitName, COUNT(r.ResourceId) FROM Resource r LEFT JOIN BusinessUnit bu ON r.BusinessUnitId = bu.BusinessUnitId GROUP BY bu.BusinessUnitName;",
-        "description": "Shows workforce allocation across business units.",
-        "tags": ["resource", "business_unit"],
         "is_validated": True,
     },
     {
@@ -1857,86 +1722,58 @@ SAMPLE_QUERIES: list[dict] = [
     },
     {
         "natural_language": "Which resources are currently on bench?",
-        "sql_query": "SELECT r.ResourceName FROM ProjectResource pr JOIN Resource r ON pr.ResourceId = r.ResourceId WHERE pr.Bench = 1;",
-        "description": "Identifies unallocated or idle resources.",
+        "sql_query": """
+                    select 
+                        r.ResourceId, r.ResourceName,p.projectname, pr.PercentageAllocation, pm.ResourceName
+                        from ProjectResource pr
+                    join project p on p.ProjectId  = pr.ProjectId
+                    join resource r on r.ResourceId=pr.ResourceId
+                    join Resource pm on r.ReportingTo = pm.ResourceId
+                    where p.ProjectName = 'DF-Bench'
+                    and pr.percentageallocation>1
+                    AND pr.IsActive = 1
+                        AND pr.AssignmentDate <= GETDATE()
+                        AND r.IsActive = 1
+                        AND r.StatusId = 8
+                        order by r.ResourceName                        
+                    """,
+        "description": "Identifies Benched, unallocated or idle resources.",
         "tags": ["resource", "bench"],
         "is_validated": True,
     },
     {
-        "natural_language": "What is the average tenure of employees?",
-        "sql_query": "SELECT AVG(TenureInYears) FROM Resource;",
-        "description": "Measures employee retention.",
-        "tags": ["resource", "tenure"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "List all active clients.",
-        "sql_query": "SELECT ClientName FROM Client WHERE IsActive = 1;",
+        "sql_query": "SELECT distinct c.ClientName, c.Description, c.CountryId FROM Client c JOIN Status st ON c.StatusId = st.StatusId WHERE c.IsActive = 1 and st.statusname='Active'",
         "description": "Fetches all currently active clients.",
         "tags": ["client"],
         "is_validated": True,
     },
     {
-        "natural_language": "What is the total agreement value of all clients?",
-        "sql_query": "SELECT SUM(AgreementValue) FROM Client;",
-        "description": "Total revenue from agreements.",
-        "tags": ["client", "revenue"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "Which clients have the highest monthly billing rate?",
-        "sql_query": "SELECT TOP 5 ClientName, MonthlyBillingRate FROM Client ORDER BY MonthlyBillingRate DESC;",
+        "sql_query": "SELECT TOP 5 ClientName, MonthlyBillingRate FROM Client where IsActive=1 and StatusId=2 ORDER BY MonthlyBillingRate DESC;",
         "description": "Top revenue-generating clients.",
         "tags": ["client", "billing"],
         "is_validated": True,
     },
     {
         "natural_language": "List all projects along with their client names.",
-        "sql_query": "SELECT p.ProjectName, c.ClientName FROM Project p JOIN Client c ON p.ClientId = c.ClientId;",
+        "sql_query": "SELECT p.ProjectName, c.ClientName FROM Project p JOIN Client c ON p.ClientId = c.ClientId where c.IsActive=1 and c.statusid=2 and p.ProjectStatusId=4;",
         "description": "Maps projects to clients.",
         "tags": ["project", "client"],
         "is_validated": True,
     },
     {
-        "natural_language": "Which projects have exceeded their planned end date?",
-        "sql_query": "SELECT ProjectName FROM Project WHERE ActualEndDate > EndDate;",
-        "description": "Identifies delayed projects.",
-        "tags": ["project", "delay"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the average project duration?",
-        "sql_query": "SELECT AVG(DATEDIFF(DAY, StartDate, EndDate)) FROM Project;",
-        "description": "Measures project lifecycle.",
-        "tags": ["project", "duration"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "Which project has the highest number of resources allocated?",
-        "sql_query": "SELECT TOP 1 ProjectName, NumberOfResorces FROM Project ORDER BY NumberOfResorces DESC;",
+        "sql_query": "SELECT TOP 10 ProjectName, NumberOfResorces FROM Project where ProjectStatusId=4 ORDER BY NumberOfResorces DESC;",
         "description": "Identifies largest project by team size.",
         "tags": ["project", "resource"],
         "is_validated": True,
     },
     {
         "natural_language": "List all resources working on a specific project.",
-        "sql_query": "SELECT r.ResourceName FROM ProjectResource pr JOIN Resource r ON pr.ResourceId = r.ResourceId WHERE pr.ProjectId = @ProjectId;",
+        "sql_query": "SELECT r.ResourceName FROM ProjectResource pr JOIN Resource r ON pr.ResourceId = r.ResourceId JOIN Project p on p.ProjectId=pr.ProjectId WHERE p.ProjectName like '%' + @ProjectName + '%'  and r.isactive=1 and r.statusid=8;",
         "description": "Project team composition.",
         "tags": ["project", "resource"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the total billing generated from all project resources?",
-        "sql_query": "SELECT SUM(Rate) FROM ProjectResource;",
-        "description": "Revenue from resource billing.",
-        "tags": ["billing", "finance"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources have the highest allocation percentage?",
-        "sql_query": "SELECT TOP 5 r.ResourceName, pr.PercentageAllocation FROM ProjectResource pr JOIN Resource r ON pr.ResourceId = r.ResourceId ORDER BY pr.PercentageAllocation DESC;",
-        "description": "Identifies overloaded resources.",
-        "tags": ["resource", "allocation"],
         "is_validated": True,
     },
     {
@@ -1961,20 +1798,6 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "List all stakeholders for a given client.",
-        "sql_query": "SELECT StakeholderName FROM ClientStakeholder WHERE ClientId = @ClientId;",
-        "description": "Client communication mapping.",
-        "tags": ["client", "stakeholder"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which business units generate the most revenue?",
-        "sql_query": "SELECT BusinessUnitId, SUM(AgreementValue) FROM Client GROUP BY BusinessUnitId ORDER BY SUM(AgreementValue) DESC;",
-        "description": "Revenue by business unit.",
-        "tags": ["business_unit", "revenue"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "How many resources joined in the last year?",
         "sql_query": "SELECT COUNT(*) FROM Resource WHERE DateOfJoin >= DATEADD(YEAR, -1, GETDATE());",
         "description": "Recent hiring trends.",
@@ -1982,45 +1805,34 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "Which projects are currently ongoing?",
-        "sql_query": "SELECT ProjectName FROM Project WHERE GETDATE() BETWEEN StartDate AND EndDate;",
-        "description": "Active timeline-based projects.",
-        "tags": ["project"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the distribution of resources by designation?",
-        "sql_query": "SELECT d.DesignationName, COUNT(r.ResourceId) FROM Resource r JOIN Designation d ON r.DesignationId = d.DesignationId GROUP BY d.DesignationName;",
-        "description": "Hierarchy distribution.",
-        "tags": ["resource", "designation"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "Which clients belong to which domain?",
-        "sql_query": "SELECT c.ClientName, d.DomainName FROM Client c JOIN Domain d ON c.DomainId = d.DomainId;",
+        "sql_query": "SELECT c.ClientName, d.DomainName FROM Client c JOIN Domain d ON c.DomainId = d.DomainId where c.isactive=1 and c.statusid=2;",
         "description": "Client domain mapping.",
         "tags": ["client", "domain"],
         "is_validated": True,
     },
     {
-        "natural_language": "What is the count of projects per client?",
-        "sql_query": "SELECT c.ClientName, COUNT(p.ProjectId) FROM Project p JOIN Client c ON p.ClientId = c.ClientId GROUP BY c.ClientName;",
-        "description": "Client engagement level.",
-        "tags": ["client", "project"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources report to a specific manager?",
-        "sql_query": "SELECT ResourceName FROM Resource WHERE ReportingTo = @ManagerId;",
+        "natural_language": "Which resources reporting to a specific manager?",
+        "sql_query": """SELECT DISTINCT
+                        r.[ResourceName],
+                        r.[EmployeeId],
+                        d.[DesignationName],
+                        bu.[BusinessUnitName],
+                        dr.[DesignatedRoleName],
+                        tf.[FunctionName]
+                    FROM [Resource] r
+                    JOIN [Resource] m ON r.[ReportingTo] = m.[ResourceId]
+                    LEFT JOIN [Designation] d ON r.[DesignationId] = d.[DesignationId]
+                    LEFT JOIN [BusinessUnit] bu ON r.[BusinessUnitId] = bu.[BusinessUnitId]
+                    LEFT JOIN [DesignatedRole] dr ON r.[DesignatedRoleId] = dr.[DesignatedRoleId]
+                    LEFT JOIN [TechFunction] tf ON r.[FunctionId] = tf.[FunctionId]
+                    WHERE m.[ResourceName] = 'ashutosh pandey'
+                        AND r.[IsActive] = 1
+                        AND r.[StatusId] = 8 
+                    ORDER BY r.[ResourceName];
+                    """,
         "description": "Reporting hierarchy.",
         "tags": ["resource", "hierarchy"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the average billing rate per project?",
-        "sql_query": "SELECT ProjectId, AVG(Rate) FROM ProjectResource GROUP BY ProjectId;",
-        "description": "Project profitability metric.",
-        "tags": ["billing", "project"],
         "is_validated": True,
     },
     {
@@ -2031,66 +1843,24 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "How many inactive resources are there?",
-        "sql_query": "SELECT COUNT(*) FROM Resource WHERE IsActive = 0;",
-        "description": "Inactive workforce count.",
-        "tags": ["resource"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "What is the total revenue generated per client along with number of projects and allocated resources?",
-        "sql_query": "SELECT c.ClientName, SUM(pr.Rate) AS TotalRevenue, COUNT(DISTINCT p.ProjectId) AS ProjectCount, COUNT(DISTINCT pr.ResourceId) AS ResourceCount FROM Client c JOIN Project p ON c.ClientId = p.ClientId JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId GROUP BY c.ClientName;",
+        "sql_query": "SELECT c.ClientName, SUM(pr.Rate) AS TotalRevenue, COUNT(DISTINCT p.ProjectId) AS ProjectCount, COUNT(DISTINCT pr.ResourceId) AS ResourceCount FROM Client c JOIN Project p ON c.ClientId = p.ClientId JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId where c.IsActive=1 and c.StatusId=2 and p.ProjectStatusId=4 and p.IsActive=1 GROUP BY c.ClientName;",
         "description": "Holistic client-level revenue and engagement view.",
         "tags": ["client", "revenue", "project", "resource"],
         "is_validated": True,
     },
     {
-        "natural_language": "Which business units have the highest billable utilization?",
-        "sql_query": "SELECT bu.BusinessUnitName, SUM(CASE WHEN pr.Billable = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS Utilization FROM ProjectResource pr JOIN BusinessUnit bu ON pr.BusinessUnitId = bu.BusinessUnitId GROUP BY bu.BusinessUnitName;",
-        "description": "Measures billable efficiency by business unit.",
-        "tags": ["business_unit", "utilization"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "List all projects with their project manager, lead, and client details.",
-        "sql_query": "SELECT p.ProjectName, pm.ResourceName AS ProjectManager, pl.ResourceName AS ProjectLead, c.ClientName FROM Project p LEFT JOIN Resource pm ON p.ProjectManagerId = pm.ResourceId LEFT JOIN Resource pl ON p.ProjectLeadId = pl.ResourceId LEFT JOIN Client c ON p.ClientId = c.ClientId;",
-        "description": "Project ownership mapping.",
-        "tags": ["project", "resource", "client"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the average experience of resources working on each project?",
-        "sql_query": "SELECT p.ProjectName, AVG(r.TotalYears) AS AvgExperience FROM Project p JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId JOIN Resource r ON pr.ResourceId = r.ResourceId GROUP BY p.ProjectName;",
-        "description": "Project team maturity analysis.",
-        "tags": ["project", "resource", "experience"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which clients have projects across multiple business units?",
-        "sql_query": "SELECT c.ClientName, COUNT(DISTINCT p.BusinessUnitId) AS BUCount FROM Client c JOIN Project p ON c.ClientId = p.ClientId GROUP BY c.ClientName HAVING COUNT(DISTINCT p.BusinessUnitId) > 1;",
-        "description": "Cross-BU client spread.",
-        "tags": ["client", "business_unit"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "List resources along with their skills and associated projects.",
-        "sql_query": "SELECT r.ResourceName, s.Name AS SkillName, p.ProjectName FROM Resource r JOIN PA_ResourceSkills rs ON r.ResourceId = rs.ResourceId JOIN PA_Skills s ON rs.SkillId = s.SkillId LEFT JOIN ProjectResource pr ON r.ResourceId = pr.ResourceId LEFT JOIN Project p ON pr.ProjectId = p.ProjectId;",
+        "sql_query": "SELECT r.ResourceName, s.Name AS SkillName, p.ProjectName FROM Resource r JOIN PA_ResourceSkills rs ON r.ResourceId = rs.ResourceId JOIN PA_Skills s ON rs.SkillId = s.SkillId LEFT JOIN ProjectResource pr ON r.ResourceId = pr.ResourceId LEFT JOIN Project p ON pr.ProjectId = p.ProjectId where p.isactive=1 and r.isactive=1 and p.projectstatusid=4;",
         "description": "Skill-to-project mapping.",
         "tags": ["resource", "skills", "project"],
         "is_validated": True,
     },
     {
         "natural_language": "Which projects have the highest average billing rate per resource?",
-        "sql_query": "SELECT p.ProjectName, AVG(pr.Rate) AS AvgRate FROM Project p JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId GROUP BY p.ProjectName ORDER BY AvgRate DESC;",
+        "sql_query": "SELECT p.ProjectName, AVG(pr.Rate) AS AvgRate FROM Project p JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId where p.isactive=1 and p.projectstatusid=4 GROUP BY p.ProjectName HAVING AVG(pr.Rate)>0 ORDER BY AvgRate DESC ;",
         "description": "High-value projects.",
         "tags": ["project", "billing"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the skill distribution across business units?",
-        "sql_query": "SELECT bu.BusinessUnitName, s.Name, COUNT(*) FROM Resource r JOIN BusinessUnit bu ON r.BusinessUnitId = bu.BusinessUnitId JOIN PA_ResourceSkills rs ON r.ResourceId = rs.ResourceId JOIN PA_Skills s ON rs.SkillId = s.SkillId GROUP BY bu.BusinessUnitName, s.Name;",
-        "description": "Skill concentration by BU.",
-        "tags": ["skills", "business_unit"],
         "is_validated": True,
     },
     {
@@ -2102,86 +1872,16 @@ SAMPLE_QUERIES: list[dict] = [
     },
     {
         "natural_language": "What is the total billing grouped by project and client?",
-        "sql_query": "SELECT c.ClientName, p.ProjectName, SUM(pr.Rate) FROM Project p JOIN Client c ON p.ClientId = c.ClientId JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId GROUP BY c.ClientName, p.ProjectName;",
+        "sql_query": "SELECT c.ClientName, p.ProjectName, SUM(pr.Rate) FROM Project p JOIN Client c ON p.ClientId = c.ClientId JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId where p.isactive=1 and c.isactive=1 GROUP BY c.ClientName, p.ProjectName having SUM(pr.Rate)>0",
         "description": "Granular billing view.",
         "tags": ["billing", "client", "project"],
         "is_validated": True,
     },
     {
-        "natural_language": "Which domains generate the highest agreement value?",
-        "sql_query": "SELECT d.DomainName, SUM(c.AgreementValue) FROM Client c JOIN Domain d ON c.DomainId = d.DomainId GROUP BY d.DomainName ORDER BY SUM(c.AgreementValue) DESC;",
-        "description": "Domain-wise revenue.",
-        "tags": ["domain", "revenue"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "List all stakeholders mapped to projects through clients.",
-        "sql_query": "SELECT p.ProjectName, cs.StakeholderName FROM Project p JOIN ClientStakeholder cs ON p.ClientId = cs.ClientId;",
+        "sql_query": "SELECT DISTINCT p.ProjectName, cs.StakeholderName FROM Project p JOIN ClientStakeholder cs ON p.ClientId = cs.ClientId;",
         "description": "Stakeholder visibility per project.",
         "tags": ["project", "stakeholder"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which projects have the lowest average resource experience?",
-        "sql_query": "SELECT p.ProjectName, AVG(r.TotalYears) AS AvgExp FROM Project p JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId JOIN Resource r ON pr.ResourceId = r.ResourceId GROUP BY p.ProjectName ORDER BY AvgExp ASC;",
-        "description": "Risky (low-experience) projects.",
-        "tags": ["project", "risk"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the billing contribution by each resource within a project?",
-        "sql_query": "SELECT p.ProjectName, r.ResourceName, pr.Rate FROM Project p JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId JOIN Resource r ON pr.ResourceId = r.ResourceId;",
-        "description": "Resource-level billing contribution.",
-        "tags": ["billing", "resource"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which business units have the most active projects?",
-        "sql_query": "SELECT bu.BusinessUnitName, COUNT(p.ProjectId) FROM Project p JOIN BusinessUnit bu ON p.BusinessUnitId = bu.BusinessUnitId WHERE p.IsActive = 1 GROUP BY bu.BusinessUnitName;",
-        "description": "BU activity comparison.",
-        "tags": ["business_unit", "project"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources are assigned to clients across multiple domains?",
-        "sql_query": "SELECT r.ResourceName, COUNT(DISTINCT c.DomainId) FROM Resource r JOIN ProjectResource pr ON r.ResourceId = pr.ResourceId JOIN Project p ON pr.ProjectId = p.ProjectId JOIN Client c ON p.ClientId = c.ClientId GROUP BY r.ResourceName HAVING COUNT(DISTINCT c.DomainId) > 1;",
-        "description": "Cross-domain exposure.",
-        "tags": ["resource", "domain"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "List all combinations of business units and domains (even if no mapping exists).",
-        "sql_query": "SELECT bu.BusinessUnitName, d.DomainName FROM BusinessUnit bu CROSS JOIN Domain d;",
-        "description": "Full matrix for strategic planning.",
-        "tags": ["cross_join", "business_unit", "domain"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "List all combinations of skills and business units.",
-        "sql_query": "SELECT s.Name, bu.BusinessUnitName FROM PA_Skills s CROSS JOIN BusinessUnit bu;",
-        "description": "Skill coverage planning grid.",
-        "tags": ["cross_join", "skills"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which combinations of project types and business units have no projects?",
-        "sql_query": "SELECT pt.ProjectTypeName, bu.BusinessUnitName FROM ProjectType pt CROSS JOIN BusinessUnit bu LEFT JOIN Project p ON p.ProjectTypeId = pt.ProjectTypeId AND p.BusinessUnitId = bu.BusinessUnitId WHERE p.ProjectId IS NULL;",
-        "description": "Gap analysis.",
-        "tags": ["cross_join", "gap_analysis"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which clients have no associated projects?",
-        "sql_query": "SELECT c.ClientName FROM Client c LEFT JOIN Project p ON c.ClientId = p.ClientId WHERE p.ProjectId IS NULL;",
-        "description": "Inactive clients.",
-        "tags": ["client"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources have skills but are not assigned to any project?",
-        "sql_query": "SELECT r.ResourceName FROM Resource r JOIN PA_ResourceSkills rs ON r.ResourceId = rs.ResourceId LEFT JOIN ProjectResource pr ON r.ResourceId = pr.ResourceId WHERE pr.ProjectId IS NULL;",
-        "description": "Underutilized skilled resources.",
-        "tags": ["resource", "skills", "utilization"],
         "is_validated": True,
     },
     {
@@ -2193,51 +1893,16 @@ SAMPLE_QUERIES: list[dict] = [
     },
     {
         "natural_language": "Which resources are working under each project manager?",
-        "sql_query": "SELECT pm.ResourceName AS Manager, r.ResourceName AS Resource FROM Project p JOIN Resource pm ON p.ProjectManagerId = pm.ResourceId JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId JOIN Resource r ON pr.ResourceId = r.ResourceId;",
+        "sql_query": "SELECT DISTINCT pm.ResourceName AS Manager, r.ResourceName AS Resource FROM Project p JOIN Resource pm ON p.ProjectManagerId = pm.ResourceId JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId JOIN Resource r ON pr.ResourceId = r.ResourceId where r.IsActive=1 and r.StatusId=8 and pm.IsActive=1 and pm.StatusId=8 order by pm.ResourceName;",
         "description": "Manager-team mapping.",
         "tags": ["resource", "hierarchy"],
         "is_validated": True,
     },
     {
         "natural_language": "What is the distribution of resources across clients?",
-        "sql_query": "SELECT c.ClientName, COUNT(DISTINCT pr.ResourceId) FROM Client c JOIN Project p ON c.ClientId = p.ClientId JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId GROUP BY c.ClientName;",
-        "description": "Client staffing levels.",
+        "sql_query": "SELECT c.ClientName, COUNT(DISTINCT pr.ResourceId) as Count FROM Client c JOIN Project p ON c.ClientId = p.ClientId JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId where pr.IsActive=1 and c.IsActive=1 and c.StatusId=2 GROUP BY c.ClientName;",
+        "description": "Client staffing levels. Resource count per client.",
         "tags": ["client", "resource"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which projects have both billable and non-billable resources?",
-        "sql_query": "SELECT p.ProjectName FROM Project p JOIN ProjectResource pr ON p.ProjectId = pr.ProjectId GROUP BY p.ProjectName HAVING SUM(CASE WHEN pr.Billable = 1 THEN 1 ELSE 0 END) > 0 AND SUM(CASE WHEN pr.Billable = 0 THEN 1 ELSE 0 END) > 0;",
-        "description": "Mixed billing projects.",
-        "tags": ["project", "billing"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the average experience per skill?",
-        "sql_query": "SELECT s.Name, AVG(rs.Experience) FROM PA_ResourceSkills rs JOIN PA_Skills s ON rs.SkillId = s.SkillId GROUP BY s.Name;",
-        "description": "Skill maturity analysis.",
-        "tags": ["skills", "experience"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which business units have the most diverse skill sets?",
-        "sql_query": "SELECT bu.BusinessUnitName, COUNT(DISTINCT rs.SkillId) FROM Resource r JOIN BusinessUnit bu ON r.BusinessUnitId = bu.BusinessUnitId JOIN PA_ResourceSkills rs ON r.ResourceId = rs.ResourceId GROUP BY bu.BusinessUnitName ORDER BY COUNT(DISTINCT rs.SkillId) DESC;",
-        "description": "Skill diversity by BU.",
-        "tags": ["business_unit", "skills"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which clients have stakeholders but no active projects?",
-        "sql_query": "SELECT DISTINCT c.ClientName FROM Client c JOIN ClientStakeholder cs ON c.ClientId = cs.ClientId LEFT JOIN Project p ON c.ClientId = p.ClientId AND p.IsActive = 1 WHERE p.ProjectId IS NULL;",
-        "description": "Dormant but engaged clients.",
-        "tags": ["client", "stakeholder"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the allocation load per resource across all projects?",
-        "sql_query": "SELECT r.ResourceName, SUM(pr.PercentageAllocation) FROM Resource r JOIN ProjectResource pr ON r.ResourceId = pr.ResourceId GROUP BY r.ResourceName;",
-        "description": "Resource workload analysis.",
-        "tags": ["resource", "allocation"],
         "is_validated": True,
     },
     {
@@ -2256,44 +1921,9 @@ SAMPLE_QUERIES: list[dict] = [
     },
     {
         "natural_language": "What is the total billing potential based on hourly rates and logged hours per client?",
-        "sql_query": "SELECT c.ClientName, SUM(e.Hrs * c.HourlyBillingRate) AS EstimatedRevenue FROM TS_EODDetails e JOIN Client c ON e.ClientName = c.ClientName GROUP BY c.ClientName;",
+        "sql_query": "SELECT c.ClientName, SUM(e.Hrs * c.HourlyBillingRate) AS EstimatedRevenue FROM TS_EODDetails e JOIN Client c ON e.ClientName = c.ClientName where c.IsActive=1 and c.StatusId=2 GROUP BY c.ClientName;",
         "description": "Revenue estimation using timesheets.",
         "tags": ["billing", "revenue"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which business units have the highest average resource tenure?",
-        "sql_query": "SELECT bu.BusinessUnitName, AVG(r.TenureInYears) FROM Resource r JOIN BusinessUnit bu ON r.BusinessUnitId = bu.BusinessUnitId GROUP BY bu.BusinessUnitName;",
-        "description": "Experience maturity by BU.",
-        "tags": ["resource", "business_unit"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which clients belong to which domains and company types?",
-        "sql_query": "SELECT c.ClientName, d.DomainName, ct.CompanyTypeName FROM Client c LEFT JOIN Domain d ON c.DomainId = d.DomainId LEFT JOIN CompanyType ct ON c.CompanyTypeId = ct.CompanyTypeId;",
-        "description": "Client segmentation view.",
-        "tags": ["client", "domain"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the distribution of clients across countries and cities?",
-        "sql_query": "SELECT co.countryName, ci.cityName, COUNT(c.ClientId) FROM Client c LEFT JOIN countries co ON c.CountryId = co.countryID LEFT JOIN cities ci ON c.CityId = ci.cityID GROUP BY co.countryName, ci.cityName;",
-        "description": "Geographic distribution of clients.",
-        "tags": ["client", "geo"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources are mapped to which clients via timesheet entries?",
-        "sql_query": "SELECT DISTINCT r.ResourceName, e.ClientName FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId WHERE e.IsDeleted = 0;",
-        "description": "Resource-client interaction mapping.",
-        "tags": ["resource", "client"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the average completion percentage of tasks per project?",
-        "sql_query": "SELECT e.Project, AVG(CAST(e.CompletionPercent AS FLOAT)) FROM TS_EODDetails e WHERE e.IsDeleted = 0 GROUP BY e.Project;",
-        "description": "Project progress tracking.",
-        "tags": ["project", "progress"],
         "is_validated": True,
     },
     {
@@ -2311,34 +1941,6 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "Which clients have the highest agreement value per domain?",
-        "sql_query": "SELECT d.DomainName, c.ClientName, c.AgreementValue FROM Client c JOIN Domain d ON c.DomainId = d.DomainId ORDER BY c.AgreementValue DESC;",
-        "description": "High-value clients per domain.",
-        "tags": ["client", "revenue"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the average client satisfaction score per project?",
-        "sql_query": "SELECT cr.ProjectId, AVG(cs.ClientSatisfactionScore) FROM ClientReview cr JOIN ClientSatisfaction cs ON cs.ClientSatisfactionId = cr.ClientId GROUP BY cr.ProjectId;",
-        "description": "Project satisfaction trends.",
-        "tags": ["client", "review"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources have unapproved timesheet entries?",
-        "sql_query": "SELECT DISTINCT r.ResourceName FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId WHERE e.IsApproved = 0;",
-        "description": "Pending approvals.",
-        "tags": ["resource", "timesheet"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the workload distribution by business unit using timesheet hours?",
-        "sql_query": "SELECT bu.BusinessUnitName, SUM(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId JOIN BusinessUnit bu ON r.BusinessUnitId = bu.BusinessUnitId GROUP BY bu.BusinessUnitName;",
-        "description": "Effort distribution across BUs.",
-        "tags": ["business_unit", "effort"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "Which skills are most common among high-tenure resources?",
         "sql_query": "SELECT s.Name, COUNT(*) FROM Resource r JOIN PA_ResourceSkills rs ON r.ResourceId = rs.ResourceId JOIN PA_Skills s ON rs.SkillId = s.SkillId WHERE r.TotalYears > 5 GROUP BY s.Name ORDER BY COUNT(*) DESC;",
         "description": "Senior skill trends.",
@@ -2353,22 +1955,8 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "Which resources have skills that are not approved?",
-        "sql_query": "SELECT r.ResourceName, s.Name FROM PA_ResourceSkills rs JOIN Resource r ON rs.ResourceId = r.ResourceId JOIN PA_Skills s ON rs.SkillId = s.SkillId WHERE rs.IsApproved = 0;",
-        "description": "Skill validation gaps.",
-        "tags": ["skills", "resource"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the average experience per subskill?",
-        "sql_query": "SELECT ss.Name, AVG(rs.SubSkillExperience) FROM PA_ResourceSkills rs JOIN PA_SubSkills ss ON rs.SubSkillId = ss.SubSkillId GROUP BY ss.Name;",
-        "description": "Subskill depth analysis.",
-        "tags": ["skills"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "Which clients use which payment methods and cycles?",
-        "sql_query": "SELECT c.ClientName, pm.PaymentMethodName, pc.PaymentCycleName FROM Client c LEFT JOIN PaymentMethod pm ON c.PaymentMethodId = pm.PaymentMethodId LEFT JOIN PaymentCycle pc ON c.PaymentCycleId = pc.PaymentCycleId;",
+        "sql_query": "SELECT c.ClientName, pm.PaymentMethodName, pc.PaymentCycleName FROM Client c LEFT JOIN PaymentMethod pm ON c.PaymentMethodId = pm.PaymentMethodId LEFT JOIN PaymentCycle pc ON c.PaymentCycleId = pc.PaymentCycleId where c.isactive=1 and c.statusid=2;",
         "description": "Payment configuration view.",
         "tags": ["client", "finance"],
         "is_validated": True,
@@ -2381,38 +1969,10 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "What is the average effort logged per activity category?",
-        "sql_query": "SELECT o.Dropdown_Description, AVG(e.Hrs) FROM TS_EODDetails e JOIN TS_SG_OEM_Master o ON e.OEM_Id = o.Dropdown_Identifier GROUP BY o.Dropdown_Description;",
-        "description": "Category-level effort trends.",
-        "tags": ["timesheet"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which clients have the longest business relationship duration?",
-        "sql_query": "SELECT ClientName, DATEDIFF(YEAR, ActualStartDate, GETDATE()) AS Years FROM Client ORDER BY Years DESC;",
-        "description": "Client longevity.",
-        "tags": ["client"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "What is the average workload per resource by designation?",
         "sql_query": "SELECT d.DesignationName, AVG(e.Hrs) FROM Resource r JOIN Designation d ON r.DesignationId = d.DesignationId JOIN TS_EODDetails e ON r.ResourceId = e.ResourceId GROUP BY d.DesignationName;",
         "description": "Workload by role.",
         "tags": ["resource"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which clients have stakeholders but no recent timesheet activity?",
-        "sql_query": "SELECT DISTINCT c.ClientName FROM Client c JOIN ClientStakeholder cs ON c.ClientId = cs.ClientId LEFT JOIN TS_EODDetails e ON c.ClientName = e.ClientName AND e.ReportDate >= DATEADD(MONTH, -1, GETDATE()) WHERE e.ID IS NULL;",
-        "description": "Inactive but engaged clients.",
-        "tags": ["client"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the effort split between billable and non-billable activities?",
-        "sql_query": "SELECT a.Billablestatus, SUM(e.Hrs) FROM TS_EODDetails e JOIN TS_Activity a ON e.Activity_Id = a.Id GROUP BY a.Billablestatus;",
-        "description": "Billing efficiency.",
-        "tags": ["billing"],
         "is_validated": True,
     },
     {
@@ -2423,45 +1983,10 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "Which organizations have the most active resources?",
-        "sql_query": "SELECT o.OrganizationName, COUNT(r.ResourceId) FROM Resource r JOIN Organization o ON r.OrganizationId = o.OrganizationId WHERE r.IsActive = 1 GROUP BY o.OrganizationName;",
-        "description": "Org-level workforce.",
-        "tags": ["organization"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "Which holidays fall within major project timelines?",
         "sql_query": "SELECT h.HolidayName, h.HolidayDate, e.Project FROM DesignatedHolidays h JOIN TS_EODDetails e ON h.HolidayDate = e.ReportDate;",
         "description": "Holiday impact analysis.",
         "tags": ["holiday"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which Jira tickets consume the most effort hours?",
-        "sql_query": "SELECT j.SFID, SUM(e.Hrs) FROM TS_EODDetails e JOIN TS_Jira_Master j ON e.Jira_Identifier = j.Jira_Identifier GROUP BY j.SFID ORDER BY SUM(e.Hrs) DESC;",
-        "description": "Jira effort tracking.",
-        "tags": ["jira", "timesheet"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the average effort per project per month?",
-        "sql_query": "SELECT e.Project, MONTH(e.ReportDate), AVG(e.Hrs) FROM TS_EODDetails e GROUP BY e.Project, MONTH(e.ReportDate);",
-        "description": "Monthly effort trends.",
-        "tags": ["project", "timesheet"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the total billable vs non-billable effort logged per resource?",
-        "sql_query": "SELECT r.ResourceName, a.Billablestatus, SUM(e.Hrs) AS TotalHours FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId JOIN TS_Activity a ON e.Activity_Id = a.Id GROUP BY r.ResourceName, a.Billablestatus;",
-        "description": "Resource-level billability breakdown.",
-        "tags": ["timesheet", "billing", "resource"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources have less than 50% billable utilization?",
-        "sql_query": "SELECT r.ResourceName, SUM(CASE WHEN a.Billablestatus = 1 THEN e.Hrs ELSE 0 END) * 1.0 / SUM(e.Hrs) AS BillableRatio FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId JOIN TS_Activity a ON e.Activity_Id = a.Id GROUP BY r.ResourceName HAVING SUM(CASE WHEN a.Billablestatus = 1 THEN e.Hrs ELSE 0 END) * 1.0 / SUM(e.Hrs) < 0.5;",
-        "description": "Identifies underperforming utilization.",
-        "tags": ["utilization", "billing"],
         "is_validated": True,
     },
     {
@@ -2472,52 +1997,10 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "Which projects have the highest non-billable effort?",
-        "sql_query": "SELECT e.Project, SUM(e.Hrs) AS NonBillableHours FROM TS_EODDetails e JOIN TS_Activity a ON e.Activity_Id = a.Id WHERE a.Billablestatus = 0 GROUP BY e.Project ORDER BY NonBillableHours DESC;",
-        "description": "Non-billable leakage.",
-        "tags": ["project", "billing"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "What is the average daily hours logged per resource?",
-        "sql_query": "SELECT r.ResourceName, AVG(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY r.ResourceName;",
+        "sql_query": "SELECT r.ResourceName, AVG(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId where r.isactive=1 and r.statusid=8 GROUP BY r.ResourceName;",
         "description": "Daily effort consistency.",
         "tags": ["timesheet", "resource"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources are over-utilized (more than 9 hours per day on average)?",
-        "sql_query": "SELECT r.ResourceName, AVG(e.Hrs) AS AvgHours FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY r.ResourceName HAVING AVG(e.Hrs) > 9;",
-        "description": "Overloaded resources.",
-        "tags": ["utilization", "resource"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the utilization percentage per business unit based on timesheet hours?",
-        "sql_query": "SELECT bu.BusinessUnitName, SUM(e.Hrs) / (COUNT(DISTINCT r.ResourceId) * 8.0 * 22) * 100 AS UtilizationPercent FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId JOIN BusinessUnit bu ON r.BusinessUnitId = bu.BusinessUnitId GROUP BY bu.BusinessUnitName;",
-        "description": "BU-level capacity utilization.",
-        "tags": ["business_unit", "utilization"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources have not logged any hours in the last 7 days?",
-        "sql_query": "SELECT r.ResourceName FROM Resource r LEFT JOIN TS_EODDetails e ON r.ResourceId = e.ResourceId AND e.ReportDate >= DATEADD(DAY, -7, GETDATE()) WHERE e.ID IS NULL;",
-        "description": "Inactive resources.",
-        "tags": ["timesheet", "resource"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the project-wise effort split by activity type?",
-        "sql_query": "SELECT e.Project, a.ActivityName, SUM(e.Hrs) FROM TS_EODDetails e JOIN TS_Activity a ON e.Activity_Id = a.Id GROUP BY e.Project, a.ActivityName;",
-        "description": "Effort categorization per project.",
-        "tags": ["project", "activity"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources are working across multiple projects in the same week?",
-        "sql_query": "SELECT r.ResourceName, COUNT(DISTINCT e.Project) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId WHERE e.ReportDate >= DATEADD(DAY, -7, GETDATE()) GROUP BY r.ResourceName HAVING COUNT(DISTINCT e.Project) > 1;",
-        "description": "Multi-project allocation.",
-        "tags": ["resource", "project"],
         "is_validated": True,
     },
     {
@@ -2525,34 +2008,6 @@ SAMPLE_QUERIES: list[dict] = [
         "sql_query": "SELECT e.ClientName, SUM(e.Hrs) FROM TS_EODDetails e JOIN TS_Activity a ON e.Activity_Id = a.Id WHERE a.Billablestatus = 1 GROUP BY e.ClientName;",
         "description": "Client billing contribution.",
         "tags": ["client", "billing"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources have the highest billable hours?",
-        "sql_query": "SELECT r.ResourceName, SUM(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId JOIN TS_Activity a ON e.Activity_Id = a.Id WHERE a.Billablestatus = 1 GROUP BY r.ResourceName ORDER BY SUM(e.Hrs) DESC;",
-        "description": "Top billable contributors.",
-        "tags": ["resource", "billing"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the ratio of billable to non-billable hours per client?",
-        "sql_query": "SELECT e.ClientName, SUM(CASE WHEN a.Billablestatus = 1 THEN e.Hrs ELSE 0 END) * 1.0 / SUM(CASE WHEN a.Billablestatus = 0 THEN e.Hrs ELSE 0 END) AS Ratio FROM TS_EODDetails e JOIN TS_Activity a ON e.Activity_Id = a.Id GROUP BY e.ClientName;",
-        "description": "Client efficiency ratio.",
-        "tags": ["client", "billing"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which projects have resources exceeding 100% allocation (more than 8 hours per day)?",
-        "sql_query": "SELECT e.Project, r.ResourceName, SUM(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY e.Project, r.ResourceName HAVING SUM(e.Hrs) > 8;",
-        "description": "Over-allocation detection.",
-        "tags": ["project", "resource"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the weekly utilization trend per project?",
-        "sql_query": "SELECT e.Project, DATEPART(WEEK, e.ReportDate), SUM(e.Hrs) FROM TS_EODDetails e GROUP BY e.Project, DATEPART(WEEK, e.ReportDate);",
-        "description": "Weekly effort trend.",
-        "tags": ["project", "timesheet"],
         "is_validated": True,
     },
     {
@@ -2570,13 +2025,6 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "What is the utilization trend of each resource over time?",
-        "sql_query": "SELECT r.ResourceName, e.ReportDate, SUM(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY r.ResourceName, e.ReportDate;",
-        "description": "Daily utilization tracking.",
-        "tags": ["resource", "timesheet"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "Which projects have no billable activity logged?",
         "sql_query": "SELECT e.Project FROM TS_EODDetails e JOIN TS_Activity a ON e.Activity_Id = a.Id GROUP BY e.Project HAVING SUM(CASE WHEN a.Billablestatus = 1 THEN e.Hrs ELSE 0 END) = 0;",
         "description": "Zero-billing projects.",
@@ -2585,7 +2033,7 @@ SAMPLE_QUERIES: list[dict] = [
     },
     {
         "natural_language": "Which resources are consistently under-utilized (less than 4 hours daily)?",
-        "sql_query": "SELECT r.ResourceName, AVG(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY r.ResourceName HAVING AVG(e.Hrs) < 4;",
+        "sql_query": "SELECT r.ResourceName, AVG(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId where r.IsActive=1 and r.StatusId=8 GROUP BY r.ResourceName HAVING AVG(e.Hrs) < 4;",
         "description": "Low utilization resources.",
         "tags": ["resource", "utilization"],
         "is_validated": True,
@@ -2595,20 +2043,6 @@ SAMPLE_QUERIES: list[dict] = [
         "sql_query": "SELECT o.Dropdown_Description, SUM(e.Hrs) FROM TS_EODDetails e JOIN TS_SG_OEM_Master o ON e.OEM_Id = o.Dropdown_Identifier GROUP BY o.Dropdown_Description;",
         "description": "OEM-level effort analysis.",
         "tags": ["timesheet"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which managers have the highest team utilization?",
-        "sql_query": "SELECT r.ReportingTo, SUM(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY r.ReportingTo ORDER BY SUM(e.Hrs) DESC;",
-        "description": "Manager efficiency.",
-        "tags": ["hierarchy", "utilization"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources log time on weekends?",
-        "sql_query": "SELECT DISTINCT r.ResourceName FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId WHERE DATENAME(WEEKDAY, e.ReportDate) IN ('Saturday', 'Sunday');",
-        "description": "Weekend workload.",
-        "tags": ["timesheet", "resource"],
         "is_validated": True,
     },
     {
@@ -2626,31 +2060,10 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "What is the monthly billable utilization trend per business unit?",
-        "sql_query": "SELECT bu.BusinessUnitName, MONTH(e.ReportDate), SUM(CASE WHEN a.Billablestatus = 1 THEN e.Hrs ELSE 0 END) * 100.0 / SUM(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId JOIN BusinessUnit bu ON r.BusinessUnitId = bu.BusinessUnitId JOIN TS_Activity a ON e.Activity_Id = a.Id GROUP BY bu.BusinessUnitName, MONTH(e.ReportDate);",
-        "description": "BU billing trends.",
-        "tags": ["business_unit", "billing"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "Which resources are contributing to the highest number of clients?",
         "sql_query": "SELECT r.ResourceName, COUNT(DISTINCT e.ClientName) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY r.ResourceName ORDER BY 2 DESC;",
         "description": "Client spread.",
         "tags": ["resource", "client"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "What is the variance in daily logged hours per resource?",
-        "sql_query": "SELECT r.ResourceName, VAR(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY r.ResourceName;",
-        "description": "Consistency of work patterns.",
-        "tags": ["resource", "timesheet"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which clients are experiencing revenue leakage due to high non-billable effort?",
-        "sql_query": "SELECT e.ClientName, SUM(CASE WHEN a.Billablestatus = 0 THEN e.Hrs ELSE 0 END) * c.HourlyBillingRate AS LeakageValue FROM TS_EODDetails e JOIN TS_Activity a ON e.Activity_Id = a.Id JOIN Client c ON e.ClientName = c.ClientName GROUP BY e.ClientName, c.HourlyBillingRate ORDER BY LeakageValue DESC;",
-        "description": "Quantifies lost revenue due to non-billable work.",
-        "tags": ["revenue", "leakage"],
         "is_validated": True,
     },
     {
@@ -2696,13 +2109,6 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "Which resources are logging effort outside their primary skill areas?",
-        "sql_query": "SELECT r.ResourceName, e.Project FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId LEFT JOIN PA_ResourceSkills rs ON r.ResourceId = rs.ResourceId WHERE rs.SkillId IS NULL;",
-        "description": "Skill mismatch detection.",
-        "tags": ["resource", "skills"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "Which managers have the highest number of unapproved timesheets?",
         "sql_query": "SELECT e.ManagerEmail, COUNT(*) FROM TS_EODDetails e WHERE e.IsApproved = 0 GROUP BY e.ManagerEmail ORDER BY COUNT(*) DESC;",
         "description": "Approval bottleneck.",
@@ -2724,13 +2130,6 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "Which resources have not logged billable hours despite being active?",
-        "sql_query": "SELECT r.ResourceName FROM Resource r LEFT JOIN TS_EODDetails e ON r.ResourceId = e.ResourceId LEFT JOIN TS_Activity a ON e.Activity_Id = a.Id WHERE r.IsActive = 1 GROUP BY r.ResourceName HAVING SUM(CASE WHEN a.Billablestatus = 1 THEN e.Hrs ELSE 0 END) = 0;",
-        "description": "Idle or misaligned resources.",
-        "tags": ["resource", "billing"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "Which clients have a sudden spike in effort compared to previous periods?",
         "sql_query": "SELECT e.ClientName, MONTH(e.ReportDate), SUM(e.Hrs) FROM TS_EODDetails e GROUP BY e.ClientName, MONTH(e.ReportDate) ORDER BY e.ClientName, MONTH(e.ReportDate);",
         "description": "Spike detection.",
@@ -2746,7 +2145,7 @@ SAMPLE_QUERIES: list[dict] = [
     },
     {
         "natural_language": "Which projects are dependent on resources with low experience?",
-        "sql_query": "SELECT e.Project, AVG(r.TotalYears) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY e.Project HAVING AVG(r.TotalYears) < 2;",
+        "sql_query": "  ",
         "description": "Delivery risk due to inexperience.",
         "tags": ["project", "risk"],
         "is_validated": True,
@@ -2763,13 +2162,6 @@ SAMPLE_QUERIES: list[dict] = [
         "sql_query": "SELECT e.Project FROM TS_EODDetails e GROUP BY e.Project HAVING AVG(CAST(e.CompletionPercent AS FLOAT)) = 0;",
         "description": "Execution inefficiency.",
         "tags": ["project", "progress"],
-        "is_validated": True,
-    },
-    {
-        "natural_language": "Which resources are consistently logging hours on non-working days?",
-        "sql_query": "SELECT r.ResourceName FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId WHERE DATENAME(WEEKDAY, e.ReportDate) IN ('Saturday','Sunday') GROUP BY r.ResourceName HAVING COUNT(*) > 10;",
-        "description": "Sustained overtime pattern.",
-        "tags": ["resource", "workload"],
         "is_validated": True,
     },
     {
@@ -3225,679 +2617,458 @@ RELATIONSHIPS: list[dict] = [
 
 
 # =============================================================================
-# Seeding functions — no need to edit below this line
+# Direct PostgreSQL seeding — no need to edit below this line
 # =============================================================================
 
 
-def find_connection(client: httpx.Client, connection_name: str | None) -> dict:
-    """Find the target connection — by name if specified, else first sqlserver."""
-    resp = client.get(f"{API_PREFIX}/connections")
-    resp.raise_for_status()
-    connections = resp.json()
+def _load_env() -> dict:
+    env_path = find_dotenv(str(Path(__file__).resolve().parents[2] / ".env"))
+    if env_path:
+        return dotenv_values(env_path)
+    return {}
 
-    if not connections:
-        print("ERROR: No connections found. Create and introspect a connection first.")
-        sys.exit(1)
 
-    if connection_name:
-        match = next((c for c in connections if c["name"] == connection_name), None)
-        if not match:
-            names = [c["name"] for c in connections]
-            print(f"ERROR: Connection '{connection_name}' not found. Available: {names}")
+def _get_connection_id(conn, connection_name: str) -> UUID:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM database_connections WHERE name = %s",
+            (connection_name,),
+        )
+        row = cur.fetchone()
+        if not row:
+            cur.execute("SELECT name FROM database_connections")
+            available = [r[0] for r in cur.fetchall()]
+            print(f"ERROR: Connection '{connection_name}' not found.")
+            print(f"  Available connections: {available}")
             sys.exit(1)
-        return match
-
-    # Default: prefer first sqlserver connection, fallback to first of any type
-    sqlserver = next((c for c in connections if c["connector_type"] == "sqlserver"), None)
-    target = sqlserver or connections[0]
-    print(f"  Using connection: {target['name']} ({target['id']}, {target['connector_type']})")
-    return target
+        return UUID(str(row[0]))
 
 
-def purge_glossary(client: httpx.Client, connection_id: str) -> None:
-    """Delete every glossary term for this connection."""
-    resp = client.get(f"{API_PREFIX}/connections/{connection_id}/glossary")
-    if resp.status_code != 200:
-        print(f"  ! Could not fetch glossary (HTTP {resp.status_code}) — skipping purge")
-        return
-    items = resp.json()
-    if not items:
-        print("  Glossary: nothing to purge")
-        return
-    deleted = fail = 0
-    for item in items:
-        del_resp = client.delete(f"{API_PREFIX}/connections/{connection_id}/glossary/{item['id']}")
-        if del_resp.status_code in (200, 204):
-            deleted += 1
-        else:
-            print(f"  ! {item['term']} — delete failed HTTP {del_resp.status_code}")
-            fail += 1
-    print(f"  Glossary: {deleted} deleted, {fail} failed")
-
-
-def purge_metrics(client: httpx.Client, connection_id: str) -> None:
-    """Delete every metric for this connection."""
-    resp = client.get(f"{API_PREFIX}/connections/{connection_id}/metrics")
-    if resp.status_code != 200:
-        print(f"  ! Could not fetch metrics (HTTP {resp.status_code}) — skipping purge")
-        return
-    items = resp.json()
-    if not items:
-        print("  Metrics: nothing to purge")
-        return
-    deleted = fail = 0
-    for item in items:
-        del_resp = client.delete(f"{API_PREFIX}/connections/{connection_id}/metrics/{item['id']}")
-        if del_resp.status_code in (200, 204):
-            deleted += 1
-        else:
-            print(f"  ! {item['metric_name']} — delete failed HTTP {del_resp.status_code}")
-            fail += 1
-    print(f"  Metrics: {deleted} deleted, {fail} failed")
-
-
-def purge_dictionary(client: httpx.Client, connection_id: str) -> None:
-    """Delete every dictionary entry for every column in this connection."""
-    tables_resp = client.get(f"{API_PREFIX}/connections/{connection_id}/tables")
-    if tables_resp.status_code != 200:
-        print(f"  ! Could not fetch tables (HTTP {tables_resp.status_code}) — skipping purge")
-        return
-    tables = tables_resp.json()
-    deleted = fail = 0
-    for table_summary in tables:
-        detail_resp = client.get(f"{API_PREFIX}/tables/{table_summary['id']}")
-        if detail_resp.status_code != 200:
-            continue
-        detail = detail_resp.json()
-        for col in detail["columns"]:
-            col_id = col["id"]
-            entries_resp = client.get(f"{API_PREFIX}/columns/{col_id}/dictionary")
-            if entries_resp.status_code != 200:
-                continue
-            for entry in entries_resp.json():
-                del_resp = client.delete(f"{API_PREFIX}/columns/{col_id}/dictionary/{entry['id']}")
-                if del_resp.status_code in (200, 204):
-                    deleted += 1
-                else:
-                    fail += 1
-    print(f"  Dictionary: {deleted} deleted, {fail} failed")
-
-
-def purge_knowledge(client: httpx.Client, connection_id: str) -> None:
-    """Delete every knowledge document for this connection."""
-    resp = client.get(f"{API_PREFIX}/connections/{connection_id}/knowledge")
-    if resp.status_code != 200:
-        print(f"  ! Could not fetch knowledge (HTTP {resp.status_code}) — skipping purge")
-        return
-    items = resp.json()
-    if not items:
-        print("  Knowledge: nothing to purge")
-        return
-    deleted = fail = 0
-    for item in items:
-        del_resp = client.delete(f"{API_PREFIX}/connections/{connection_id}/knowledge/{item['id']}")
-        if del_resp.status_code in (200, 204):
-            deleted += 1
-        else:
-            print(f"  ! {item['title']} — delete failed HTTP {del_resp.status_code}")
-            fail += 1
-    print(f"  Knowledge: {deleted} deleted, {fail} failed")
-
-
-def purge_sample_queries(client: httpx.Client, connection_id: str) -> None:
-    """Delete every sample query for this connection."""
-    resp = client.get(f"{API_PREFIX}/connections/{connection_id}/sample-queries")
-    if resp.status_code != 200:
-        print(f"  ! Could not fetch sample queries (HTTP {resp.status_code}) — skipping purge")
-        return
-    items = resp.json()
-    if not items:
-        print("  Sample Queries: nothing to purge")
-        return
-    deleted = fail = 0
-    for item in items:
-        del_resp = client.delete(
-            f"{API_PREFIX}/connections/{connection_id}/sample-queries/{item['id']}"
-        )
-        if del_resp.status_code in (200, 204):
-            deleted += 1
-        else:
-            print(
-                f"  ! {item['natural_language'][:60]} — delete failed HTTP {del_resp.status_code}"
+def _ensure_constraints(conn) -> None:
+    """Create unique constraints and id defaults if they don't exist (upsert prerequisite)."""
+    constraints = [
+        (
+            "glossary_terms",
+            "glossary_terms_connection_id_term_unique",
+            "UNIQUE (connection_id, term)",
+        ),
+        (
+            "metric_definitions",
+            "metric_definitions_connection_id_metric_name_unique",
+            "UNIQUE (connection_id, metric_name)",
+        ),
+        (
+            "sample_queries",
+            "sample_queries_connection_id_nl_unique",
+            "UNIQUE (connection_id, natural_language)",
+        ),
+        (
+            "knowledge_documents",
+            "knowledge_documents_connection_id_title_unique",
+            "UNIQUE (connection_id, title)",
+        ),
+        (
+            "dictionary_entries",
+            "dictionary_entries_column_id_raw_value_unique",
+            "UNIQUE (column_id, raw_value)",
+        ),
+    ]
+    tables_with_uuid_id = [
+        "glossary_terms",
+        "metric_definitions",
+        "sample_queries",
+        "knowledge_documents",
+        "dictionary_entries",
+        "cached_relationships",
+    ]
+    print("  Ensuring schema prerequisites for upsert...")
+    with conn.cursor() as cur:
+        for tbl in tables_with_uuid_id:
+            cur.execute(
+                """
+                SELECT column_default FROM information_schema.columns
+                WHERE table_name = %s AND column_name = 'id' AND column_default IS NULL
+                """,
+                (tbl,),
             )
-            fail += 1
-    print(f"  Sample Queries: {deleted} deleted, {fail} failed")
+            if cur.fetchone():
+                cur.execute(
+                    f"ALTER TABLE {tbl} ALTER COLUMN id SET DEFAULT gen_random_uuid()"
+                )
+                print(f"    + Added id DEFAULT to: {tbl}")
+            else:
+                print(f"    = id DEFAULT exists: {tbl}")
 
-
-def purge_relationships(client: httpx.Client, connection_id: str) -> None:
-    """Delete every manually declared relationship for this connection."""
-    resp = client.get(f"{API_PREFIX}/connections/{connection_id}/relationships")
-    if resp.status_code != 200:
-        print(f"  ! Could not fetch relationships (HTTP {resp.status_code}) — skipping purge")
-        return
-    items = resp.json()
-    if not items:
-        print("  Relationships: nothing to purge")
-        return
-    deleted = fail = 0
-    for item in items:
-        del_resp = client.delete(
-            f"{API_PREFIX}/connections/{connection_id}/relationships/{item['id']}"
-        )
-        if del_resp.status_code in (200, 204):
-            deleted += 1
-        else:
-            print(
-                f"  ! {item['source_table']}.{item['source_column']} — delete failed HTTP {del_resp.status_code}"
+        for _tbl, constraint_name, _def in constraints:
+            cur.execute(
+                "SELECT 1 FROM pg_constraint WHERE conname = %s",
+                (constraint_name,),
             )
-            fail += 1
-    print(f"  Relationships: {deleted} deleted, {fail} failed")
+            if not cur.fetchone():
+                cur.execute(f"ALTER TABLE {_tbl} ADD CONSTRAINT {constraint_name} {_def}")
+                print(f"    + Added constraint: {constraint_name}")
+            else:
+                print(f"    = Constraint exists: {constraint_name}")
 
 
-def seed_glossary(client: httpx.Client, connection_id: str, overwrite: bool = False) -> None:
+def _upsert_glossary(conn, connection_id: UUID) -> None:
     if not GLOSSARY_TERMS:
         print("\n--- Glossary: nothing to seed (GLOSSARY_TERMS is empty) ---")
         return
 
-    print(f"\n--- Seeding {len(GLOSSARY_TERMS)} Glossary Terms (overwrite={overwrite}) ---")
-
-    # Fetch existing terms: term -> id
-    existing: dict[str, str] = {}
-    resp = client.get(f"{API_PREFIX}/connections/{connection_id}/glossary")
-    if resp.status_code == 200:
-        for item in resp.json():
-            existing[item["term"]] = item["id"]
-
-    ok = skip = overwritten = fail = 0
-    for term_data in GLOSSARY_TERMS:
-        term = term_data["term"]
-        if term in existing:
-            if overwrite:
-                del_resp = client.delete(
-                    f"{API_PREFIX}/connections/{connection_id}/glossary/{existing[term]}"
+    print(f"\n--- Seeding {len(GLOSSARY_TERMS)} Glossary Terms ---")
+    ok = fail = 0
+    with conn.cursor() as cur:
+        for term_data in GLOSSARY_TERMS:
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO glossary_terms
+                        (connection_id, term, definition, sql_expression,
+                         related_tables, related_columns, examples)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (connection_id, term) DO UPDATE SET
+                        definition   = EXCLUDED.definition,
+                        sql_expression = EXCLUDED.sql_expression,
+                        related_tables = EXCLUDED.related_tables,
+                        related_columns = EXCLUDED.related_columns,
+                        examples = EXCLUDED.examples,
+                        updated_at = NOW()
+                    """,
+                    (
+                        str(connection_id),
+                        term_data["term"],
+                        term_data["definition"],
+                        term_data["sql_expression"],
+                        term_data.get("related_tables"),
+                        term_data.get("related_columns"),
+                        json.dumps(term_data.get("examples", [])),
+                    ),
                 )
-                if del_resp.status_code not in (200, 204):
-                    print(
-                        f"  ! {term} — delete failed HTTP {del_resp.status_code}: {del_resp.text[:80]}"
-                    )
-                    fail += 1
-                    continue
-            else:
-                print(f"  = {term} (skipped — already exists)")
-                skip += 1
-                continue
-
-        post_resp = client.post(
-            f"{API_PREFIX}/connections/{connection_id}/glossary", json=term_data
-        )
-        if post_resp.status_code == 201:
-            if overwrite and term in existing:
-                print(f"  ~ {term} (overwritten)")
-                overwritten += 1
-            else:
-                print(f"  + {term}")
                 ok += 1
-        else:
-            print(f"  ! {term} — HTTP {post_resp.status_code}: {post_resp.text[:120]}")
-            fail += 1
+            except Exception as e:
+                print(f"  ! {term_data['term']} — {e}")
+                fail += 1
+    print(f"  Glossary: {ok} upserted, {fail} failed")
 
-    print(f"  Glossary: {ok} created, {overwritten} overwritten, {skip} skipped, {fail} failed")
 
-
-def seed_metrics(client: httpx.Client, connection_id: str, overwrite: bool = False) -> None:
+def _upsert_metrics(conn, connection_id: UUID) -> None:
     if not METRICS:
         print("\n--- Metrics: nothing to seed (METRICS is empty) ---")
         return
 
-    print(f"\n--- Seeding {len(METRICS)} Metrics (overwrite={overwrite}) ---")
-
-    # Fetch existing metrics: metric_name -> id
-    existing: dict[str, str] = {}
-    resp = client.get(f"{API_PREFIX}/connections/{connection_id}/metrics")
-    if resp.status_code == 200:
-        for item in resp.json():
-            existing[item["metric_name"]] = item["id"]
-
-    ok = skip = overwritten = fail = 0
-    for metric_data in METRICS:
-        name = metric_data["metric_name"]
-        display = metric_data["display_name"]
-        if name in existing:
-            if overwrite:
-                del_resp = client.delete(
-                    f"{API_PREFIX}/connections/{connection_id}/metrics/{existing[name]}"
+    print(f"\n--- Seeding {len(METRICS)} Metrics ---")
+    ok = fail = 0
+    with conn.cursor() as cur:
+        for metric_data in METRICS:
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO metric_definitions
+                        (connection_id, metric_name, display_name, description,
+                         sql_expression, aggregation_type, related_tables,
+                         dimensions, filters)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (connection_id, metric_name) DO UPDATE SET
+                        display_name = EXCLUDED.display_name,
+                        description  = EXCLUDED.description,
+                        sql_expression = EXCLUDED.sql_expression,
+                        aggregation_type = EXCLUDED.aggregation_type,
+                        related_tables = EXCLUDED.related_tables,
+                        dimensions = EXCLUDED.dimensions,
+                        filters    = EXCLUDED.filters,
+                        updated_at  = NOW()
+                    """,
+                    (
+                        str(connection_id),
+                        metric_data["metric_name"],
+                        metric_data["display_name"],
+                        metric_data.get("description"),
+                        metric_data["sql_expression"],
+                        metric_data.get("aggregation_type"),
+                        metric_data.get("related_tables"),
+                        metric_data.get("dimensions"),
+                        json.dumps(metric_data.get("filters", {})),
+                    ),
                 )
-                if del_resp.status_code not in (200, 204):
-                    print(
-                        f"  ! {display} — delete failed HTTP {del_resp.status_code}: {del_resp.text[:80]}"
-                    )
-                    fail += 1
-                    continue
-            else:
-                print(f"  = {display} (skipped — already exists)")
-                skip += 1
-                continue
-
-        post_resp = client.post(
-            f"{API_PREFIX}/connections/{connection_id}/metrics", json=metric_data
-        )
-        if post_resp.status_code == 201:
-            if overwrite and name in existing:
-                print(f"  ~ {display} (overwritten)")
-                overwritten += 1
-            else:
-                print(f"  + {display}")
                 ok += 1
-        else:
-            print(f"  ! {display} — HTTP {post_resp.status_code}: {post_resp.text[:120]}")
-            fail += 1
-
-    print(f"  Metrics: {ok} created, {overwritten} overwritten, {skip} skipped, {fail} failed")
-
-
-def seed_dictionary(client: httpx.Client, connection_id: str, overwrite: bool = False) -> None:
-    if not DICTIONARY_ENTRIES:
-        print("\n--- Dictionary: nothing to seed (DICTIONARY_ENTRIES is empty) ---")
-        return
-
-    print(
-        f"\n--- Seeding Dictionary Entries for {len(DICTIONARY_ENTRIES)} columns (overwrite={overwrite}) ---"
-    )
-
-    # Build (table_name, column_name) → column_id map from the cached schema
-    tables_resp = client.get(f"{API_PREFIX}/connections/{connection_id}/tables")
-    tables_resp.raise_for_status()
-    tables = tables_resp.json()
-
-    column_map: dict[tuple[str, str], str] = {}
-    print(f"  Scanning {len(tables)} tables for column IDs...")
-    for table_summary in tables:
-        detail_resp = client.get(f"{API_PREFIX}/tables/{table_summary['id']}")
-        detail_resp.raise_for_status()
-        detail = detail_resp.json()
-        for col in detail["columns"]:
-            column_map[(detail["table_name"], col["column_name"])] = col["id"]
-
-    ok = skip = overwritten = fail = col_skip = 0
-    for (table_name, column_name), entries in DICTIONARY_ENTRIES.items():
-        col_id = column_map.get((table_name, column_name))
-        if not col_id:
-            print(f"  ! {table_name}.{column_name} — not found in schema cache (introspect first?)")
-            col_skip += 1
-            continue
-
-        # Fetch existing entries for this column: raw_value -> entry_id
-        existing: dict[str, str] = {}
-        get_resp = client.get(f"{API_PREFIX}/columns/{col_id}/dictionary")
-        if get_resp.status_code == 200:
-            for item in get_resp.json():
-                existing[item["raw_value"]] = item["id"]
-
-        print(f"  {table_name}.{column_name} ({len(entries)} entries):")
-        for entry_data in entries:
-            raw = entry_data["raw_value"]
-            if raw in existing:
-                if overwrite:
-                    del_resp = client.delete(
-                        f"{API_PREFIX}/columns/{col_id}/dictionary/{existing[raw]}"
-                    )
-                    if del_resp.status_code not in (200, 204):
-                        print(
-                            f"    ! {raw!r} — delete failed HTTP {del_resp.status_code}: {del_resp.text[:80]}"
-                        )
-                        fail += 1
-                        continue
-                else:
-                    print(f"    = {raw!r} (skipped — already exists)")
-                    skip += 1
-                    continue
-
-            post_resp = client.post(f"{API_PREFIX}/columns/{col_id}/dictionary", json=entry_data)
-            if post_resp.status_code == 201:
-                if overwrite and raw in existing:
-                    print(f"    ~ {raw!r} → {entry_data['display_value']} (overwritten)")
-                    overwritten += 1
-                else:
-                    print(f"    + {raw!r} → {entry_data['display_value']}")
-                    ok += 1
-            else:
-                print(f"    ! {raw!r} — HTTP {post_resp.status_code}: {post_resp.text[:100]}")
+            except Exception as e:
+                print(f"  ! {metric_data['metric_name']} — {e}")
                 fail += 1
-
-    print(
-        f"  Dictionary: {ok} created, {overwritten} overwritten, {skip} skipped, {fail} failed, {col_skip} columns not found"
-    )
+    print(f"  Metrics: {ok} upserted, {fail} failed")
 
 
-def seed_knowledge(client: httpx.Client, connection_id: str, overwrite: bool = False) -> None:
-    if not KNOWLEDGE_DOCS:
-        print("\n--- Knowledge: nothing to seed (KNOWLEDGE_DOCS is empty) ---")
-        return
-
-    print(f"\n--- Seeding {len(KNOWLEDGE_DOCS)} Knowledge Documents (overwrite={overwrite}) ---")
-
-    # Fetch existing documents: title -> id
-    existing: dict[str, str] = {}
-    resp = client.get(f"{API_PREFIX}/connections/{connection_id}/knowledge")
-    if resp.status_code == 200:
-        for item in resp.json():
-            existing[item["title"]] = item["id"]
-
-    ok = skip = overwritten = fail = 0
-    for doc in KNOWLEDGE_DOCS:
-        title = doc["title"]
-        if title in existing:
-            if overwrite:
-                del_resp = client.delete(
-                    f"{API_PREFIX}/connections/{connection_id}/knowledge/{existing[title]}"
-                )
-                if del_resp.status_code not in (200, 204):
-                    print(
-                        f"  ! {title} — delete failed HTTP {del_resp.status_code}: {del_resp.text[:80]}"
-                    )
-                    fail += 1
-                    continue
-            else:
-                print(f"  = {title} (skipped — already exists)")
-                skip += 1
-                continue
-
-        payload = {"title": title, "content": doc["content"], "source_url": None}
-        post_resp = client.post(f"{API_PREFIX}/connections/{connection_id}/knowledge", json=payload)
-        if post_resp.status_code == 201:
-            result = post_resp.json()
-            if overwrite and title in existing:
-                print(f"  ~ {title} ({result.get('chunk_count', '?')} chunks, overwritten)")
-                overwritten += 1
-            else:
-                print(f"  + {title} ({result.get('chunk_count', '?')} chunks)")
-                ok += 1
-        else:
-            print(f"  ! {title} — HTTP {post_resp.status_code}: {post_resp.text[:120]}")
-            fail += 1
-
-    print(f"  Knowledge: {ok} created, {overwritten} overwritten, {skip} skipped, {fail} failed")
-
-
-def seed_sample_queries(client: httpx.Client, connection_id: str, overwrite: bool = False) -> None:
+def _upsert_sample_queries(conn, connection_id: UUID) -> None:
     if not SAMPLE_QUERIES:
         print("\n--- Sample Queries: nothing to seed (SAMPLE_QUERIES is empty) ---")
         return
 
-    print(f"\n--- Seeding {len(SAMPLE_QUERIES)} Sample Queries (overwrite={overwrite}) ---")
-
-    # Fetch existing queries: natural_language -> id
-    existing: dict[str, str] = {}
-    resp = client.get(f"{API_PREFIX}/connections/{connection_id}/sample-queries")
-    if resp.status_code == 200:
-        for item in resp.json():
-            existing[item["natural_language"]] = item["id"]
-
-    ok = skip = overwritten = fail = 0
-    for sq in SAMPLE_QUERIES:
-        label = sq["natural_language"]
-        if label in existing:
-            if overwrite:
-                del_resp = client.delete(
-                    f"{API_PREFIX}/connections/{connection_id}/sample-queries/{existing[label]}"
+    print(f"\n--- Seeding {len(SAMPLE_QUERIES)} Sample Queries ---")
+    ok = fail = 0
+    with conn.cursor() as cur:
+        for sq in SAMPLE_QUERIES:
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO sample_queries
+                        (connection_id, natural_language, sql_query,
+                         description, tags, is_validated)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (connection_id, natural_language) DO UPDATE SET
+                        sql_query     = EXCLUDED.sql_query,
+                        description   = EXCLUDED.description,
+                        tags          = EXCLUDED.tags,
+                        is_validated  = EXCLUDED.is_validated,
+                        updated_at    = NOW()
+                    """,
+                    (
+                        str(connection_id),
+                        sq["natural_language"],
+                        sq["sql_query"],
+                        sq.get("description"),
+                        sq.get("tags"),
+                        sq.get("is_validated", True),
+                    ),
                 )
-                if del_resp.status_code not in (200, 204):
-                    print(
-                        f"  ! {label[:70]} — delete failed HTTP {del_resp.status_code}: {del_resp.text[:80]}"
-                    )
-                    fail += 1
-                    continue
-            else:
-                print(f"  = {label[:70]} (skipped — already exists)")
-                skip += 1
+                ok += 1
+            except Exception as e:
+                print(f"  ! {sq['natural_language'][:60]} — {e}")
+                fail += 1
+    print(f"  Sample Queries: {ok} upserted, {fail} failed")
+
+
+def _upsert_knowledge(conn, connection_id: UUID) -> None:
+    if not KNOWLEDGE_DOCS:
+        print("\n--- Knowledge: nothing to seed (KNOWLEDGE_DOCS is empty) ---")
+        return
+
+    print(f"\n--- Seeding {len(KNOWLEDGE_DOCS)} Knowledge Documents ---")
+    ok = fail = 0
+    with conn.cursor() as cur:
+        for doc in KNOWLEDGE_DOCS:
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO knowledge_documents
+                        (connection_id, title, source_url, content, chunk_count)
+                    VALUES (%s, %s, %s, %s, 0)
+                    ON CONFLICT (connection_id, title) DO UPDATE SET
+                        source_url   = EXCLUDED.source_url,
+                        content      = EXCLUDED.content,
+                        updated_at   = NOW()
+                    """,
+                    (
+                        str(connection_id),
+                        doc["title"],
+                        doc.get("source_url"),
+                        doc["content"],
+                    ),
+                )
+                ok += 1
+            except Exception as e:
+                print(f"  ! {doc['title']} — {e}")
+                fail += 1
+    print(f"  Knowledge: {ok} upserted, {fail} failed")
+    print("  Note: Run reembed script or trigger embed from UI to generate chunks.")
+
+
+def _upsert_dictionary(conn, connection_id: UUID) -> None:
+    if not DICTIONARY_ENTRIES:
+        print("\n--- Dictionary: nothing to seed (DICTIONARY_ENTRIES is empty) ---")
+        return
+
+    print(f"\n--- Seeding Dictionary Entries for {len(DICTIONARY_ENTRIES)} columns ---")
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT cc.id, ct.table_name, cc.column_name
+            FROM cached_columns cc
+            JOIN cached_tables ct ON cc.table_id = ct.id
+            WHERE ct.connection_id = %s
+            """,
+            (str(connection_id),),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            print("  WARNING: No cached schema found. Run introspection first.")
+            print("  Skipping dictionary entries.")
+            return
+
+        col_map: dict[tuple[str, str], str] = {
+            (str(r[1]), str(r[2])): str(r[0]) for r in rows
+        }
+        print(f"  Found {len(col_map)} columns in schema cache.")
+
+    ok = col_skip = fail = 0
+    with conn.cursor() as cur:
+        for (table_name, column_name), entries in DICTIONARY_ENTRIES.items():
+            col_id = col_map.get((table_name, column_name))
+            if not col_id:
+                print(
+                    f"  ! {table_name}.{column_name} — not found in schema cache "
+                    "(run introspection first)"
+                )
+                col_skip += 1
                 continue
 
-        post_resp = client.post(f"{API_PREFIX}/connections/{connection_id}/sample-queries", json=sq)
-        if post_resp.status_code == 201:
-            if overwrite and label in existing:
-                print(f"  ~ {label[:70]} (overwritten)")
-                overwritten += 1
-            else:
-                print(f"  + {label[:70]}")
-                ok += 1
-        else:
-            print(f"  ! {label[:70]} — HTTP {post_resp.status_code}: {post_resp.text[:120]}")
-            fail += 1
+            for entry_data in entries:
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO dictionary_entries
+                            (column_id, raw_value, display_value, description, sort_order)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (column_id, raw_value) DO UPDATE SET
+                            display_value = EXCLUDED.display_value,
+                            description   = EXCLUDED.description,
+                            sort_order    = EXCLUDED.sort_order
+                        """,
+                        (
+                            col_id,
+                            entry_data["raw_value"],
+                            entry_data["display_value"],
+                            entry_data.get("description"),
+                            entry_data.get("sort_order", 0),
+                        ),
+                    )
+                    ok += 1
+                except Exception as e:
+                    conn.execute("ROLLBACK")
+                    print(f"  ! {table_name}.{column_name}[{entry_data['raw_value']}] — {e}")
+                    fail += 1
 
     print(
-        f"  Sample Queries: {ok} created, {overwritten} overwritten, {skip} skipped, {fail} failed"
+        f"  Dictionary: {ok} upserted, {fail} failed, {col_skip} columns not found"
     )
 
 
-def seed_relationships(client: httpx.Client, connection_id: str, overwrite: bool = False) -> None:
+def _upsert_relationships(conn, connection_id: UUID) -> None:
     if not RELATIONSHIPS:
         print("\n--- Relationships: nothing to seed (RELATIONSHIPS is empty) ---")
         return
 
-    print(f"\n--- Seeding {len(RELATIONSHIPS)} Manual Relationships (overwrite={overwrite}) ---")
+    print(f"\n--- Seeding {len(RELATIONSHIPS)} Manual Relationships ---")
 
-    tables_resp = client.get(f"{API_PREFIX}/connections/{connection_id}/tables")
-    cached_tables: set[str] = set()
-    if tables_resp.status_code == 200:
-        for table in tables_resp.json():
-            cached_tables.add(table["table_name"])
-    else:
-        print(
-            f"  ! Could not fetch cached tables (HTTP {tables_resp.status_code}) — "
-            "relationship validation will rely on API errors"
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, table_name FROM cached_tables WHERE connection_id = %s
+            """,
+            (str(connection_id),),
         )
+        rows = cur.fetchall()
+        if not rows:
+            print("  WARNING: No cached schema found. Run introspection first.")
+            print("  Skipping relationships.")
+            return
 
-    # Fetch existing manual relationships: constraint_name -> id
-    existing: dict[str, str] = {}
-    resp = client.get(f"{API_PREFIX}/connections/{connection_id}/relationships")
-    if resp.status_code == 200:
-        for item in resp.json():
-            if item.get("constraint_name"):
-                existing[item["constraint_name"]] = item["id"]
+        table_map: dict[str, str] = {str(r[1]): str(r[0]) for r in rows}
+        print(f"  Found {len(table_map)} tables in schema cache.")
 
-    ok = skip = overwritten = fail = unavailable = 0
-    for rel in RELATIONSHIPS:
-        key = rel.get("constraint_name") or f"{rel['source_table']}.{rel['source_column']}"
+    ok = unavailable = fail = 0
+    with conn.cursor() as cur:
+        for rel in RELATIONSHIPS:
+            src_id = table_map.get(rel["source_table"])
+            tgt_id = table_map.get(rel["target_table"])
 
-        missing_tables: list[str] = []
-        if cached_tables:
-            if rel["source_table"] not in cached_tables:
-                missing_tables.append(rel["source_table"])
-            if rel["target_table"] not in cached_tables:
-                missing_tables.append(rel["target_table"])
-        if missing_tables:
-            missing_display = ", ".join(dict.fromkeys(missing_tables))
-            print(f"  - {key} (skipped — table not present in schema cache: {missing_display})")
-            unavailable += 1
-            continue
-
-        if key in existing:
-            if overwrite:
-                del_resp = client.delete(
-                    f"{API_PREFIX}/connections/{connection_id}/relationships/{existing[key]}"
-                )
-                if del_resp.status_code not in (200, 204):
-                    print(
-                        f"  ! {key} — delete failed HTTP {del_resp.status_code}: {del_resp.text[:80]}"
-                    )
-                    fail += 1
-                    continue
-            else:
-                print(f"  = {key} (skipped — already exists)")
-                skip += 1
+            missing = [
+                t for t in [rel["source_table"], rel["target_table"]]
+                if t not in table_map
+            ]
+            if missing:
+                key = rel.get("constraint_name") or f"{rel['source_table']}.{rel['source_column']}"
+                print(f"  - {key} (skipped — table not in cache: {', '.join(missing)})")
+                unavailable += 1
                 continue
 
-        post_resp = client.post(f"{API_PREFIX}/connections/{connection_id}/relationships", json=rel)
-        if post_resp.status_code == 201:
-            if overwrite and key in existing:
-                print(f"  ~ {key} (overwritten)")
-                overwritten += 1
-            else:
-                print(
-                    f"  + {rel['source_table']}.{rel['source_column']} → {rel['target_table']}.{rel['target_column']}"
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO cached_relationships
+                        (connection_id, constraint_name, is_manual,
+                         relationship_type, source_table_id, source_column,
+                         target_table_id, target_column)
+                    VALUES (%s, %s, true, %s, %s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (
+                        str(connection_id),
+                        rel.get("constraint_name"),
+                        rel.get("relationship_type"),
+                        src_id,
+                        rel["source_column"],
+                        tgt_id,
+                        rel["target_column"],
+                    ),
                 )
-                ok += 1
-        else:
-            print(f"  ! {key} — HTTP {post_resp.status_code}: {post_resp.text[:120]}")
-            fail += 1
+                if cur.rowcount > 0:
+                    ok += 1
+                    print(
+                        f"  + {rel['source_table']}.{rel['source_column']} "
+                        f"-> {rel['target_table']}.{rel['target_column']}"
+                    )
+                else:
+                    key = rel.get("constraint_name") or f"{rel['source_table']}.{rel['source_column']}"
+                    print(f"  = {key} (already exists)")
+            except Exception as e:
+                conn.execute("ROLLBACK")
+                print(f"  ! {rel.get('constraint_name', rel['source_table'])} — {e}")
+                fail += 1
 
     print(
-        f"  Relationships: {ok} created, {overwritten} overwritten, {skip} skipped, "
-        f"{unavailable} unavailable, {fail} failed"
+        f"  Relationships: {ok} created, {unavailable} unavailable (no schema), {fail} failed"
     )
-
-
-def print_schema_summary(client: httpx.Client, connection_id: str) -> None:
-    """Print all table/column names to help fill in DICTIONARY_ENTRIES."""
-    print("\n--- Schema Summary (use this to fill in DICTIONARY_ENTRIES) ---")
-    tables_resp = client.get(f"{API_PREFIX}/connections/{connection_id}/tables")
-    tables_resp.raise_for_status()
-    tables = tables_resp.json()
-
-    for table_summary in tables:
-        detail_resp = client.get(f"{API_PREFIX}/tables/{table_summary['id']}")
-        detail_resp.raise_for_status()
-        detail = detail_resp.json()
-        cols = [c["column_name"] for c in detail["columns"]]
-        print(f"  {detail['table_name']}: {', '.join(cols)}")
-
-
-def login(base_url: str, email: str, password: str) -> str:
-    """Authenticate against the QueryWise backend and return an access token."""
-    try:
-        resp = httpx.post(
-            f"{base_url}{API_PREFIX}/auth/login",
-            json={"email": email, "password": password},
-            timeout=30,
-        )
-    except httpx.ConnectError as e:
-        print(f"ERROR: Cannot reach backend at {base_url}: {e}")
-        sys.exit(1)
-
-    if resp.status_code == 401:
-        print(f"ERROR: Login failed — invalid credentials for '{email}'.")
-        print("  Use --email and --password to supply valid admin credentials.")
-        sys.exit(1)
-
-    if resp.status_code != 200:
-        print(f"ERROR: Login returned HTTP {resp.status_code}: {resp.text[:200]}")
-        sys.exit(1)
-
-    token = resp.json().get("access_token")
-    if not token:
-        print("ERROR: Login response did not contain an access_token.")
-        sys.exit(1)
-
-    return token
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Seed semantic metadata for an Azure SQL Server connection into QueryWise"
-    )
-    parser.add_argument(
-        "--base-url",
-        default="http://localhost:8000",
-        help="QueryWise backend URL (default: http://localhost:8000)",
-    )
-    parser.add_argument(
-        "--connection-name",
-        default=None,
-        help="Name of the connection to seed (default: first sqlserver connection)",
-    )
-    parser.add_argument(
-        "--email",
-        default="admin@querywise.dev",
-        help="Admin user email for authentication (default: admin@querywise.dev)",
-    )
-    parser.add_argument(
-        "--password",
-        default="admin123",
-        help="Admin user password for authentication (default: admin123)",
-    )
-    parser.add_argument(
-        "--schema-only",
-        action="store_true",
-        help="Only print the schema summary — useful for discovering column names before filling in the seed data",
-    )
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Delete existing entries (matched by key) before re-seeding. By default existing entries are skipped.",
-    )
-    parser.add_argument(
-        "--purge",
-        action="store_true",
-        help=(
-            "Delete ALL existing entries for this connection across all resources, "
-            "then seed from scratch. Use this to fully reset the semantic layer."
-        ),
-    )
-    args = parser.parse_args()
+    env = _load_env()
 
-    base_url = args.base_url.rstrip("/")
-    print(f"QueryWise SQL Server Metadata Seeder → {base_url}")
-    if args.purge:
-        print("  Mode: PURGE — ALL existing entries will be deleted, then re-seeded from scratch")
-    elif args.overwrite:
-        print(
-            "  Mode: OVERWRITE — existing entries (matched by key) will be deleted and re-created"
-        )
-    else:
-        print(
-            "  Mode: SKIP — existing entries will not be modified (use --overwrite or --purge to reset)"
-        )
+    database_url = env.get("DATABASE_URL")
+    if not database_url:
+        print("ERROR: DATABASE_URL not found in .env")
+        print("  Set DATABASE_URL in your .env file (postgresql:// or postgresql+asyncpg://)")
+        sys.exit(1)
 
-    # Authenticate and obtain a JWT before making any API calls
-    print(f"  Authenticating as {args.email}...")
-    token = login(base_url, args.email, args.password)
-    print("  Authenticated.")
+    connection_name = env.get("SEED_CONNECTION_NAME")
+    if not connection_name:
+        print("ERROR: SEED_CONNECTION_NAME not found in .env")
+        print("  Set SEED_CONNECTION_NAME to the name of your SQL Server connection in QueryWise.")
+        sys.exit(1)
 
-    auth_headers = {"Authorization": f"Bearer {token}"}
+    print("QueryWise SQL Server Metadata Seeder")
+    database_url_sync = database_url.replace("postgresql+asyncpg://", "postgresql://")
+    db_display = database_url_sync.split("@")[0] + "@..." if "@" in database_url_sync else database_url_sync
+    print(f"  DATABASE_URL: {db_display}")
+    print(f"  Connection:    {connection_name}")
 
-    with httpx.Client(base_url=base_url, timeout=60, headers=auth_headers) as client:
-        # Verify backend is reachable
-        try:
-            client.get(f"{API_PREFIX}/health").raise_for_status()
-        except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-            print(f"ERROR: Cannot reach backend at {base_url}: {e}")
-            sys.exit(1)
+    try:
+        conn = psycopg.connect(database_url_sync)
+        print("  Connected to PostgreSQL.")
+    except Exception as e:
+        print(f"ERROR: Cannot connect to PostgreSQL: {e}")
+        sys.exit(1)
 
-        conn = find_connection(client, args.connection_name)
-        connection_id = conn["id"]
+    connection_id = _get_connection_id(conn, connection_name)
+    print(f"  Connection ID: {connection_id}")
 
-        if args.schema_only:
-            print_schema_summary(client, connection_id)
-            return
-
-        if args.purge:
-            print("\n--- Purging all existing entries ---")
-            purge_glossary(client, connection_id)
-            purge_metrics(client, connection_id)
-            purge_dictionary(client, connection_id)
-            purge_knowledge(client, connection_id)
-            purge_sample_queries(client, connection_id)
-            purge_relationships(client, connection_id)
-            print("--- Purge complete — seeding fresh ---")
-
-        seed_glossary(client, connection_id, overwrite=args.overwrite)
-        seed_metrics(client, connection_id, overwrite=args.overwrite)
-        seed_dictionary(client, connection_id, overwrite=args.overwrite)
-        seed_knowledge(client, connection_id, overwrite=args.overwrite)
-        seed_sample_queries(client, connection_id, overwrite=args.overwrite)
-        seed_relationships(client, connection_id, overwrite=args.overwrite)
-
-    print("\n✓ Done. Verify in the UI:")
-    print("  Glossary        → http://localhost:5173/glossary")
-    print("  Metrics         → http://localhost:5173/metrics")
-    print("  Dictionary      → Connections → click a table → Dictionary tab")
-    print("  Knowledge       → http://localhost:5173/knowledge")
-    print("  Sample Queries  → http://localhost:5173/sample-queries")
-    print(f"  Relationships   → GET {args.base_url}/api/v1/connections/<id>/relationships")
-    print("\nEmbeddings will generate in the background — check the progress")
-    print(f"banner in the UI or: GET {args.base_url}/api/v1/embeddings/status")
-    print("\nNOTE: Manual relationships survive re-introspection. Sample query")
-    print("  embeddings are generated automatically after seeding.")
+    try:
+        _ensure_constraints(conn)
+        _upsert_glossary(conn, connection_id)
+        _upsert_metrics(conn, connection_id)
+        _upsert_sample_queries(conn, connection_id)
+        _upsert_knowledge(conn, connection_id)
+        _upsert_dictionary(conn, connection_id)
+        _upsert_relationships(conn, connection_id)
+        conn.commit()
+        print("\nDone. All data committed.")
+        print("  Embeddings will generate in background - run reembed script or trigger from UI.")
+    except Exception as e:
+        conn.rollback()
+        print(f"\nERROR: {e}")
+        sys.exit(1)
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

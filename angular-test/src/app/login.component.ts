@@ -1,6 +1,8 @@
 import { Component, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
+
+import { getRuntimeApiUrl } from './utils/api';
 import { CommonModule } from '@angular/common';
 
 @Component({
@@ -223,7 +225,8 @@ export class LoginComponent {
     this.error.set('');
     this.loading.set(true);
     try {
-      const res = await fetch('http://localhost:8000/api/v1/auth/login', {
+      const apiBase = getRuntimeApiUrl();
+      const res = await fetch(`${apiBase}/api/v1/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -235,7 +238,7 @@ export class LoginComponent {
         return;
       }
       const data = await res.json();
-      sessionStorage.setItem('qw_api_url', 'http://localhost:8000');
+      sessionStorage.setItem('qw_api_url', apiBase);
       sessionStorage.setItem('qw_auth_token', data.access_token);
       sessionStorage.setItem('qw_user_role', data.role ?? '');
       sessionStorage.setItem('qw_user_email', data.email ?? this.email);
