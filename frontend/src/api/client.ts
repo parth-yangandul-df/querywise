@@ -2,7 +2,10 @@ import axios from 'axios';
 
 import { clearUserInfo } from '../utils/auth';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const runtimeApiBase =
+  typeof window !== 'undefined' ? (window as Window & { __QW_API_URL__?: string }).__QW_API_URL__ : undefined;
+
+const API_BASE = runtimeApiBase || import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 /** Read a cookie value by name from document.cookie (non-HttpOnly cookies only). */
 function getCookie(name: string): string | null {

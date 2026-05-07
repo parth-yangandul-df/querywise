@@ -24,6 +24,7 @@ dependencies = [
     "platformdirs>=4.0",
     "tenacity>=8.0",
     "prometheus-fastapi-instrumentator>=7.0",
+    "slowapi>=0.1",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +44,8 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.8",
     "mypy>=1.13",
+    "psycopg[binary]>=3.1",
+    "python-dotenv>=1.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -60,6 +63,8 @@ select = ["E", "F", "I", "N", "UP", "B"]
 "app/llm/graph/graph.py" = ["E501"]
 # Prompts are natural language, not Python code
 "app/llm/prompts/*.py" = ["E501"]
+# Seed script contains SQL query strings that exceed line length
+"scripts/seed_sqlserver_metadata.py" = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

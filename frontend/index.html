@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="qw-api-url" content="" />
+    <script>
+      (function () {
+        var meta = document.querySelector('meta[name="qw-api-url"]');
+        var value = meta && meta.content ? meta.content : '';
+        if (value && !window.__QW_API_URL__) {
+          window.__QW_API_URL__ = value;
+        }
+      })();
+    </script>
     <title>QueryWise</title>
   </head>
   <body>
