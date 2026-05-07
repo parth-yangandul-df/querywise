@@ -83,6 +83,18 @@ async def build_context_node(state: GraphState) -> dict[str, Any]:
         db, connection_id, resolved_question, dialect=state["connector_type"]
     )
 
+    if context.sample_queries:
+        for sq in context.sample_queries:
+            logger.debug(
+                "build_context_node: sample_query q=%r sql=%r",
+                sq.natural_language,
+                sq.sql_query[:100],
+            )
+        logger.info(
+            "build_context_node: sample_queries count=%d",
+            len(context.sample_queries),
+        )
+
     # Inject scope constraints for 'user' role
     prompt_context = context.prompt_context
     if resource_id is not None:

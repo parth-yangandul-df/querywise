@@ -1,323 +1,218 @@
-# Data & Interface Contracts
+# Data and Interface Contracts
 
-## Overview
+## Purpose
 
-This document covers the database schema (app-db), API endpoint contracts, Pydantic request/response schemas, and the TypeScript types that mirror them in the frontend.
+This document captures the current persistence model and the HTTP contracts that are active in the live backend.
 
----
+## Core persistence entities
 
-## App-DB Schema (PostgreSQL + pgvector)
+All app-owned data lives in the metadata database configured by `DATABASE_URL`.
 
-Database name: `querywise` (from `docker-compose.yml`). All tables use UUID primary keys and `created_at`/`updated_at` timestamps. Vector columns use `VECTOR(settings.embedding_dimension)` — default `1536` for OpenAI, `768` for Ollama `nomic-embed-text`.
+### DatabaseConnection
 
-### `database_connections`
+Model: `backend/app/db/models/connection.py`
 
-**Model:** `backend/app/db/models/connection.py` — `DatabaseConnection`
+Important fields:
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | UUID PK | |
-| `name` | VARCHAR | Display name |
-| `db_type` | VARCHAR | `postgresql`, `bigquery`, `databricks`, `sqlserver` |
-| `connection_string` | TEXT | Fernet-encrypted |
-| `is_active` | BOOLEAN | Default `true` |
-| `created_at` | TIMESTAMP | |
-| `updated_at` | TIMESTAMP | |
+- `id`
+- `name`
+- `connector_type`
+- `connection_string_encrypted`
+- `default_schema`
+- `read_only`
+- `max_query_timeout_seconds`
+- `max_rows`
+- `allowed_table_names`
+- `last_introspected_at`
 
-Relationships (FK): one-to-many with `cached_tables`, `glossary_terms`, `metric_definitions`, `sample_queries`.
+This is the root entity for schema cache, semantic metadata, and sessions.
 
-### `cached_tables`
+### Schema cache
 
-**Model:** `backend/app/db/models/schema_cache.py` — `CachedTable`
+Main models in `backend/app/db/models/schema_cache.py`:
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | UUID PK | |
-| `connection_id` | UUID FK → `database_connections` | |
-| `schema_name` | VARCHAR | DB schema (e.g., `public`, `dbo`) |
-| `table_name` | VARCHAR | |
-| `description` | TEXT | Optional business description |
-| `embedding` | VECTOR | For semantic table search |
-| `created_at` | TIMESTAMP | |
-| `updated_at` | TIMESTAMP | |
+- `CachedTable`
+- `CachedColumn`
+- `CachedRelationship`
+- `DictionaryEntry`
 
-### `cached_columns`
+These power table selection, column dictionaries, and relationship awareness in the semantic layer.
 
-**Model:** `backend/app/db/models/schema_cache.py` — `CachedColumn`
+### Semantic metadata
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | UUID PK | |
-| `table_id` | UUID FK → `cached_tables` | |
-| `column_name` | VARCHAR | |
-| `data_type` | VARCHAR | Native DB type |
-| `is_nullable` | BOOLEAN | |
-| `is_primary_key` | BOOLEAN | |
-| `is_foreign_key` | BOOLEAN | |
-| `referenced_table` | VARCHAR | For FK columns |
-| `description` | TEXT | Optional business description |
-| `created_at` | TIMESTAMP | |
-| `updated_at` | TIMESTAMP | |
+Main models:
 
-### `cached_relationships`
+- `GlossaryTerm`
+- `MetricDefinition`
+- `SampleQuery`
+- `KnowledgeDocument`
+- `KnowledgeChunk`
 
-**Model:** `backend/app/db/models/schema_cache.py` — `CachedRelationship`
+These objects are connection-scoped and may have embeddings generated or regenerated in the background.
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | UUID PK | |
-| `table_id` | UUID FK → `cached_tables` | |
-| `from_table` | VARCHAR | |
-| `from_column` | VARCHAR | |
-| `to_table` | VARCHAR | |
-| `to_column` | VARCHAR | |
-| `relationship_type` | VARCHAR | e.g., `FOREIGN KEY` |
-| `created_at` | TIMESTAMP | |
-| `updated_at` | TIMESTAMP | |
+### Session and history
 
-### `dictionary_entries`
+Main models:
 
-**Model:** `backend/app/db/models/schema_cache.py` — `DictionaryEntry`
+- `ChatSession`
+- `QueryExecution`
 
-Maps column values to business-readable labels.
+`QueryExecution` is the key audit record. Important fields include:
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | UUID PK | |
-| `table_id` | UUID FK → `cached_tables` | |
-| `column_name` | VARCHAR | |
-| `raw_value` | VARCHAR | Stored DB value |
-| `display_label` | VARCHAR | Human-readable label |
-| `created_at` | TIMESTAMP | |
-| `updated_at` | TIMESTAMP | |
+- `natural_language`
+- `generated_sql`
+- `final_sql`
+- `execution_status`
+- `error_message`
+- `row_count`
+- `execution_time_ms`
+- `llm_provider`
+- `llm_model`
+- `retry_count`
+- `result_summary`
+- `turn_type`
+- `clarification_reason`
+- `result_columns`
+- `result_preview_rows`
+- `turn_context`
 
-### `glossary_terms`
+`turn_context` now stores compact follow-up data such as the resolved question, answer, SQL, preview rows, and `result_status`.
 
-**Model:** `backend/app/db/models/glossary.py` — `GlossaryTerm`
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | UUID PK | |
-| `connection_id` | UUID FK → `database_connections` | |
-| `term` | VARCHAR | Business term |
-| `definition` | TEXT | Business definition |
-| `related_tables` | TEXT[] | Table names referenced in definition |
-| `embedding` | VECTOR | For semantic glossary lookup |
-| `created_at` | TIMESTAMP | |
-| `updated_at` | TIMESTAMP | |
-
-### `metric_definitions`
-
-**Model:** `backend/app/db/models/glossary.py` — `MetricDefinition`
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | UUID PK | |
-| `connection_id` | UUID FK → `database_connections` | |
-| `metric_name` | VARCHAR | |
-| `description` | TEXT | |
-| `sql_expression` | TEXT | SQL fragment expressing the metric |
-| `embedding` | VECTOR | For semantic metric lookup |
-| `created_at` | TIMESTAMP | |
-| `updated_at` | TIMESTAMP | |
-
-### `sample_queries`
-
-**Model:** `backend/app/db/models/glossary.py` — `SampleQuery`
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | UUID PK | |
-| `connection_id` | UUID FK → `database_connections` | |
-| `question` | TEXT | Natural-language question |
-| `sql` | TEXT | Known-good SQL answer |
-| `embedding` | VECTOR | Embedded from `question` |
-| `created_at` | TIMESTAMP | |
-| `updated_at` | TIMESTAMP | |
-
-### `knowledge_documents`
-
-**Model:** `backend/app/db/models/` — `KnowledgeDocument`
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | UUID PK | |
-| `connection_id` | UUID FK → `database_connections` | |
-| `title` | VARCHAR | |
-| `source_url` | VARCHAR \| NULL | If imported from URL |
-| `raw_content` | TEXT | Full original content |
-| `created_at` | TIMESTAMP | |
-| `updated_at` | TIMESTAMP | |
-
-### `knowledge_chunks`
-
-**Model:** `backend/app/db/models/` — `KnowledgeChunk`
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | UUID PK | |
-| `document_id` | UUID FK → `knowledge_documents` | |
-| `chunk_index` | INTEGER | Order within document |
-| `content` | TEXT | Chunk text (≤450 words) |
-| `embedding` | VECTOR | For vector search |
-| `created_at` | TIMESTAMP | |
-| `updated_at` | TIMESTAMP | |
-
-Chunking parameters: 450 words per chunk, 80-word overlap. Auto-detects HTML and strips tags before chunking.
-
-### `chat_sessions`
-
-**Model:** `backend/app/db/models/chat_session.py` — `ChatSession`
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | UUID PK | |
-| `title` | VARCHAR \| NULL | Auto-set from first question |
-| `connection_id` | UUID FK → `database_connections` | |
-| `created_at` | TIMESTAMP | |
-| `updated_at` | TIMESTAMP | |
-
-### `query_executions`
-
-**Model:** `backend/app/db/models/query_history.py` — `QueryExecution`
-
-Full audit trail for every query.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | UUID PK | |
-| `session_id` | UUID FK → `chat_sessions` | |
-| `connection_id` | UUID FK → `database_connections` | |
-| `question` | TEXT | |
-| `sql` | TEXT \| NULL | Generated SQL |
-| `answer` | TEXT \| NULL | Interpreted answer |
-| `rows_returned` | INTEGER \| NULL | |
-| `execution_time_ms` | INTEGER \| NULL | |
-| `intent` | VARCHAR \| NULL | Matched intent name (template path only) |
-| `intent_confidence` | FLOAT \| NULL | |
-| `path` | VARCHAR | `template` or `llm` |
-| `error` | TEXT \| NULL | Error message if failed |
-| `created_at` | TIMESTAMP | |
-
----
-
-## API Endpoints
+## API surface
 
 Base prefix: `/api/v1`
 
-### Query
+Active router groups:
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/query` | Main NL query endpoint |
-| `POST` | `/query/execute-sql` | Execute raw SQL (bypasses LLM pipeline) |
-| `POST` | `/query/sql-only` | Generate SQL without executing |
+- `/auth`
+- `/query`
+- `/connections`
+- `/schemas`
+- `/glossary`
+- `/connections/{connection_id}/metrics`
+- `/columns/{column_id}/dictionary`
+- `/connections/{connection_id}/sample-queries`
+- `/query-history`
+- `/knowledge`
+- `/sessions`
+- `/users`
+- `/admin`
+- `/health`, `/ready`, `/embeddings/status`
 
-#### `POST /query` — Request
+## Query API
 
-**Schema:** `backend/app/api/v1/schemas/query.py` — `QueryRequest`
+### Request
 
-```json
-{
-  "question": "string (required)",
-  "connection_id": "UUID (required)",
-  "session_id": "UUID | null",
-  "history": [
-    {"role": "user|assistant", "content": "string"}
-  ]
-}
-```
-
-`history` max length: **6 turns** (enforced at schema level).
-
-#### `POST /query` — Response
-
-**Schema:** `QueryResponse`
+Schema: `backend/app/api/v1/schemas/query.py::QueryRequest`
 
 ```json
 {
-  "answer": "string | null",
-  "sql": "string | null",
-  "rows": [{"column": "value"}],
-  "columns": ["col1", "col2"],
-  "rows_returned": 0,
-  "execution_time_ms": 0,
-  "session_id": "UUID",
-  "query_id": "UUID",
-  "intent": "string | null",
-  "intent_confidence": 0.0,
-  "path": "template | llm",
-  "error": "string | null"
+  "connection_id": "uuid",
+  "question": "Show open invoices",
+  "session_id": "uuid or null",
+  "clear_context": false
 }
 ```
 
-#### `POST /query/execute-sql` — Request
+Notes:
+
+- conversation history is backend-owned and loaded from persisted session history
+- `clear_context=true` forces the backend to ignore prior session context for this request
+
+### Response from `POST /api/v1/query`
+
+The endpoint returns the raw dict produced by `execute_nl_query()`. In practice that includes:
 
 ```json
 {
-  "sql": "string (required)",
-  "connection_id": "UUID (required)"
+  "id": "uuid or null",
+  "question": "Show open invoices",
+  "turn_type": "query",
+  "result_status": "success",
+  "clarification_message": null,
+  "clarification_options": [],
+  "generated_sql": "SELECT ...",
+  "final_sql": "SELECT ...",
+  "explanation": null,
+  "columns": ["invoice_id", "amount"],
+  "column_types": ["uuid", "numeric"],
+  "rows": [["...", 1200.5]],
+  "row_count": 1,
+  "execution_time_ms": 83.4,
+  "truncated": false,
+  "summary": "1 open invoice found.",
+  "highlights": [],
+  "suggested_followups": ["Show SQL"],
+  "llm_provider": "openrouter",
+  "llm_model": "deepseek/deepseek-v3.2",
+  "retry_count": 0
 }
 ```
 
-#### `POST /query/sql-only` — Request
+Clarification turns return the same general shape but with:
 
-Same as `QueryRequest`. Response omits `rows` and `answer`; only returns `sql`.
+- `turn_type = "clarification"`
+- no SQL or rows
+- `clarification_message`
+- `clarification_options`
 
----
+### Stream events from `POST /api/v1/query/stream`
 
-### Sessions
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/sessions` | List all sessions |
-| `POST` | `/sessions` | Create a new session |
-| `DELETE` | `/sessions/{id}` | Delete a session and its history |
-| `GET` | `/sessions/{id}/messages` | Get full message history for a session |
-
-#### Session Object
+SSE event payloads currently use these shapes:
 
 ```json
-{
-  "id": "UUID",
-  "title": "string | null",
-  "connection_id": "UUID",
-  "created_at": "datetime",
-  "updated_at": "datetime"
-}
+{"type": "stage", "stage": "understanding", "label": "Understanding your question...", "progress": 20}
 ```
-
-#### Message Object
 
 ```json
-{
-  "id": "UUID",
-  "session_id": "UUID",
-  "question": "string",
-  "answer": "string | null",
-  "sql": "string | null",
-  "rows_returned": 0,
-  "execution_time_ms": 0,
-  "path": "template | llm",
-  "error": "string | null",
-  "created_at": "datetime"
-}
+{"type": "result", "data": {"turn_type": "query"}}
 ```
 
----
+```json
+{"type": "error", "message": "Something went wrong. Please try again.", "code": 500}
+```
 
-### Connections
+## Sessions API
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/connections` | List all connections |
-| `POST` | `/connections` | Create a connection |
-| `GET` | `/connections/{id}` | Get connection details |
-| `PUT` | `/connections/{id}` | Update a connection |
-| `DELETE` | `/connections/{id}` | Delete a connection |
-| `POST` | `/connections/{id}/test` | Test connection liveness |
+Primary session endpoints:
 
-#### Connection Create/Update Request
+- `POST /api/v1/sessions`
+- `GET /api/v1/sessions`
+- `GET /api/v1/sessions/{session_id}`
+- `GET /api/v1/sessions/{session_id}/messages`
+- `DELETE /api/v1/sessions/{session_id}`
+
+The Angular chat UI creates a session up front and then reuses that session ID for every streamed query.
+
+## Health and readiness
+
+Operational endpoints:
+
+- `GET /api/v1/health` returns `{ "status": "ok" }`
+- `GET /api/v1/ready` checks database connectivity and returns `ready` or `not_ready`
+- `GET /api/v1/embeddings/status` reports background embedding task status per connection
+
+## Frontend-facing query shape
+
+The Angular chat client expects a subset of the query response under `QueryResult`:
+
+- `generated_sql`
+- `final_sql`
+- `columns`
+- `column_types`
+- `rows`
+- `row_count`
+- `execution_time_ms`
+- `truncated`
+- `summary`
+- `highlights`
+- `suggested_followups`
+- `clarification_message`
+- `clarification_options`
+- `turn_type`
+- `retry_count`
+
+That client renders the rows as a client-side searchable, sortable, paginated table.
 
 ```json
 {

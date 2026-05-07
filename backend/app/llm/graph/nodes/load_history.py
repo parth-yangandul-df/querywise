@@ -81,11 +81,24 @@ async def load_history(state: GraphState) -> dict[str, Any]:
     last_sql: str | None = None
     last_columns: list[str] | None = None
     last_preview: list[list] | None = None
+    last_query_context: dict | None = None
     for row in reversed(rows):
         if row.turn_type == "query" and row.execution_status == "success":
             last_sql = row.generated_sql or row.final_sql
             last_columns = row.result_columns
             last_preview = row.result_preview_rows
+            # Build dedicated follow-up context from turn_context
+            if row.turn_context:
+                turn_ctx = row.turn_context if isinstance(row.turn_context, dict) else {}
+                last_query_context = {
+                    "resolved_question": turn_ctx.get("resolved_question"),
+                    "sql": last_sql,
+                    "answer": turn_ctx.get("answer"),
+                    "result_columns": last_columns,
+                    # Compact: only 5 rows for follow-up prompts
+                    "result_preview_rows": last_preview[:5] if last_preview else None,
+                    "result_status": turn_ctx.get("result_status", "success"),
+                }
             break
 
     return {
@@ -93,6 +106,7 @@ async def load_history(state: GraphState) -> dict[str, Any]:
         "last_generated_sql": last_sql,
         "last_result_columns": last_columns,
         "last_result_preview_rows": last_preview,
+        "last_query_context": last_query_context,
     }
 
 
@@ -120,4 +134,5 @@ def _empty_history() -> dict[str, Any]:
         "last_generated_sql": None,
         "last_result_columns": None,
         "last_result_preview_rows": None,
+        "last_query_context": None,
     }

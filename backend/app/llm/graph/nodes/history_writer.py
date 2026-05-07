@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -14,9 +15,13 @@ _MAX_PREVIEW_ROWS = 20
 
 
 def _sanitize_value(value: Any) -> Any:
-    """Convert Decimal to float/int for JSON serialization."""
+    """Convert non-serializable types to JSON-serializable formats."""
     if isinstance(value, Decimal):
         return float(value) if value % 1 else int(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
     return value
 
 
@@ -55,6 +60,18 @@ async def write_history(state: GraphState) -> dict[str, Any]:
     else:
         summary = state.get("answer")
 
+    # Build turn_context for follow-up reuse
+    turn_context: dict | None = None
+    if turn_type == "query" and result and not error:
+        result_status = "empty" if not result.rows else "success"
+        turn_context = {
+            "resolved_question": state.get("resolved_question") or state["question"],
+            "answer": summary,
+            "result_columns": result_columns,
+            "result_preview_rows": result_preview_rows,
+            "result_status": result_status,
+        }
+
     try:
         execution = QueryExecution(
             connection_id=uuid.UUID(state["connection_id"]),
@@ -75,11 +92,18 @@ async def write_history(state: GraphState) -> dict[str, Any]:
             clarification_reason=state.get("clarification_reason"),
             result_columns=result_columns,
             result_preview_rows=result_preview_rows,
+            turn_context=turn_context,
         )
         db.add(execution)
         await db.flush()
-    except Exception:
-        logger.warning("write_history: failed to persist query execution record", exc_info=True)
+    except Exception as e:
+        logger.error(
+            "write_history: failed - session=%s action=%s error=%s",
+            state.get("session_id"),
+            action,
+            str(e),
+            exc_info=True,
+        )
         try:
             await db.rollback()
         except Exception:
@@ -87,6 +111,7 @@ async def write_history(state: GraphState) -> dict[str, Any]:
         return {
             "execution_id": None,
             "execution_time_ms": result.execution_time_ms if result else None,
+            "history_write_failed": True,
         }
 
     return {

@@ -97,5 +97,8 @@ class Settings(BaseSettings):
     langsmith_project: str = "querywise"
     langsmith_tracing_enabled: bool = False
 
+    # Feature flags
+    use_follow_up_path: bool = False
+
 
 settings = Settings()

@@ -33,6 +33,7 @@ class GraphState(TypedDict):
     last_generated_sql: str | None  # SQL from the most recent successful query turn
     last_result_columns: list[str] | None
     last_result_preview_rows: list[list] | None  # max 20 rows from last successful query
+    last_query_context: dict | None  # Compact follow-up context: resolved_question, sql, answer, columns, preview, status
 
     # ── Turn resolution (set by resolve_turn node) ───────────────────────
     action: str | None  # "query" | "clarification" | "show_sql" | "explain_result"

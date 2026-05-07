@@ -88,15 +88,20 @@ async def similarity_check(state: GraphState) -> dict[str, Any]:
         "similarity_check: best match similarity=%.4f q=%r matched_sql=%r",
         similarity,
         sample_query.natural_language[:60],
-        sample_query.sql_query[:60],
+        sample_query.sql_query[:200],
     )
+    logger.debug("similarity_check: matched_sql full=%r", sample_query.sql_query)
 
     if similarity >= _SIMILARITY_THRESHOLD:
         logger.info(
             "similarity_check: shortcut matched q=%r similarity=%.4f sql=%r",
             state["question"][:60],
             similarity,
-            sample_query.sql_query[:60],
+            sample_query.sql_query[:200],
+        )
+        logger.debug(
+            "similarity_check: shortcut SQL full=%r",
+            sample_query.sql_query,
         )
         return {
             "similarity_shortcut": True,

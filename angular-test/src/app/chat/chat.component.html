@@ -90,7 +90,7 @@
                   </div>
                 }
 
-                <!-- Clarification options (not follow-ups) -->
+                <!-- Clarification options -->
                 @if (msg.result.clarification_options.length > 0) {
                   <div class="suggestion-chips">
                     @for (opt of msg.result.clarification_options; track opt) {
@@ -110,33 +110,110 @@
                   }
                 </div>
 
-                <!-- Result Table -->
+                <!-- Result Table with PrimeNG -->
                 @if (msg.result.rows.length > 0) {
                   <div class="result-table-wrapper">
-                    <table class="result-table">
-                      <thead>
-                        <tr>
-                          @for (col of msg.result.columns; track col) {
-                            <th>{{ col }}</th>
-                          }
-                        </tr>
-                      </thead>
-                      <tbody>
-                        @for (row of msg.result.rows; track $index) {
+                    <div class="table-toolbar">
+                      <input
+                        type="text"
+                        class="table-search"
+                        placeholder="Search"
+                        [value]="getTableState(msg.result.id).searchTerm"
+                        (input)="onSearchChange(msg.result.id, $any($event.target).value)"
+                      />
+                      <button class="export-btn" (click)="exportToCsv(msg.result)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                          <polyline points="7 10 12 15 17 10"/>
+                          <line x1="12" y2="15" x1="12" y2="3"/>
+                        </svg>
+                        Export CSV
+                      </button>
+                    </div>
+
+                    <div class="table-scroll">
+                      <table class="result-table">
+                        <thead>
                           <tr>
-                            @for (cell of row; track $index) {
-                              <td>
-                                @if (cell === null || cell === undefined) {
-                                  <span class="null-value">null</span>
-                                } @else {
-                                  {{ cell }}
-                                }
-                              </td>
+                            @for (col of msg.result.columns; track col; let i = $index) {
+                              <th (click)="onSort(msg.result.id, col)" class="sortable-header">
+                                <span class="header-content">
+                                  {{ col }}
+                                  <i [class]="getSortIcon(msg.result.id, col)"></i>
+                                </span>
+                              </th>
                             }
                           </tr>
-                        }
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          @for (row of getPaginatedRows(msg.result).rows; track $index) {
+                            <tr>
+                              @for (cell of row; track $index; let cellIndex = $index) {
+                                <td [title]="formatCellValue(cell, msg.result.column_types[cellIndex])">
+                                  @if (cell === null || cell === undefined) {
+                                    <span class="null-value">null</span>
+                                  } @else {
+                                    {{ formatCellValue(cell, msg.result.column_types[cellIndex]) }}
+                                  }
+                                </td>
+                              }
+                            </tr>
+                          }
+                        </tbody>
+                      </table>
+                    </div>
+
+                    @if (getPaginatedRows(msg.result).total > 0) {
+                      <div class="table-pagination">
+<span class="pagination-info">
+                          {{ (getTableState(msg.result.id).currentPage - 1) * getTableState(msg.result.id).rowsPerPage + 1 }} -
+                          {{ min(getTableState(msg.result.id).currentPage * getTableState(msg.result.id).rowsPerPage, getPaginatedRows(msg.result).total) }}
+                          of {{ getPaginatedRows(msg.result).total }}
+                        </span>
+                        <div class="pagination-controls">
+                          <button
+                            class="page-btn"
+                            [disabled]="getTableState(msg.result.id).currentPage === 1"
+                            (click)="onPageChange(msg.result.id, getTableState(msg.result.id).currentPage - 1)"
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <polyline points="15 18 9 12 15 6"/>
+                            </svg>
+                          </button>
+
+                          @for (page of getVisiblePages(msg.result); track page) {
+                            <button
+                              class="page-btn"
+                              [class.active]="getTableState(msg.result.id).currentPage === page"
+                              (click)="onPageChange(msg.result.id, page)"
+                            >
+                              {{ page }}
+                            </button>
+                          }
+
+                          <button
+                            class="page-btn"
+                            [disabled]="getTableState(msg.result.id).currentPage >= getTotalPages(msg.result)"
+                            (click)="onPageChange(msg.result.id, getTableState(msg.result.id).currentPage + 1)"
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <polyline points="9 18 15 12 9 6"/>
+                            </svg>
+                          </button>
+                        </div>
+                        <div class="rows-dropdown">
+                          <select
+                            [value]="getTableState(msg.result.id).rowsPerPage"
+                            (change)="onRowsPerPageChange(msg.result.id, +$any($event.target).value)"
+                          >
+                            <option [value]="10">10</option>
+                            <option [value]="25">25</option>
+                            <option [value]="50">50</option>
+                          </select>
+                        </div>
+                      </div>
+                    }
+
                     @if (msg.result.truncated) {
                       <p class="truncated-notice">Results truncated — export CSV for full data</p>
                     }

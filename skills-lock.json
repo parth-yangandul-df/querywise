@@ -16,6 +16,12 @@
       "sourceType": "github",
       "computedHash": "f71138e885d3e0df8c78b4814554ae146a1a6dbe76bafcc32e95f2ba6d4073c9"
     },
+    "documentation-writer": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "skillPath": "skills/documentation-writer/SKILL.md",
+      "computedHash": "ee53d65b163cd7eb953a930c95841cfe398cc2c0bd24c06508bbaa07c432be35"
+    },
     "langgraph-state-management": {
       "source": "lubu-labs/langchain-agent-skills",
       "sourceType": "github",

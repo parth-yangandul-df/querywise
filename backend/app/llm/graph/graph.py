@@ -73,6 +73,7 @@ from app.llm.graph.nodes.build_context_node import build_context_node
 from app.llm.graph.nodes.compose_sql import compose_sql, route_after_compose
 from app.llm.graph.nodes.execute_sql import execute_sql, route_after_execute
 from app.llm.graph.nodes.handle_error import handle_error, route_after_handle_error
+from app.llm.graph.nodes.handle_follow_up import handle_follow_up, route_after_follow_up
 from app.llm.graph.nodes.history_writer import write_history
 from app.llm.graph.nodes.load_history import load_history
 from app.llm.graph.nodes.resolve_turn import resolve_turn, route_after_resolve
@@ -115,6 +116,7 @@ def _build_graph(checkpointer: Any | None = None) -> Any:
     # ── Nodes ────────────────────────────────────────────────────────────
     graph.add_node("load_history", load_history)
     graph.add_node("resolve_turn", resolve_turn)
+    graph.add_node("handle_follow_up", handle_follow_up)
     graph.add_node("build_context", build_context_node)
     graph.add_node("similarity_check", similarity_check)
     graph.add_node("compose_sql", compose_sql)
@@ -134,9 +136,20 @@ def _build_graph(checkpointer: Any | None = None) -> Any:
         "resolve_turn",
         route_after_resolve,
         {
-            "build_context": "build_context",  # query path
+            "build_context": "build_context",  # query path + follow_up needs_full_compose
+            "handle_follow_up": "handle_follow_up",  # follow_up reuse/rewrite path
             "answer_from_state": "answer_from_state",
             "write_history": "write_history",  # clarification path
+        },
+    )
+
+    # ── Follow-up path ───────────────────────────────────────────────────
+    graph.add_conditional_edges(
+        "handle_follow_up",
+        route_after_follow_up,
+        {
+            "validate_sql": "validate_sql",  # follow_up_rewrite_sql path
+            "write_history": "write_history",  # reuse_answer or clarification
         },
     )
 

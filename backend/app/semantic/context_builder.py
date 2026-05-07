@@ -36,6 +36,7 @@ from app.semantic.relationship_inference import (
     get_inferred_relationships,
     get_referenced_tables,
 )
+from app.semantic.relevance_scorer import extract_keywords, keyword_match_score
 from app.semantic.schema_linker import LinkedTable, find_relevant_tables
 from app.services.embedding_service import embed_text
 
@@ -152,7 +153,7 @@ async def build_context(
     # the LLM guessing abbreviated column names (e.g. [Name] instead of
     # [BusinessUnitName]) — the LLM can only use exact names if the neighbour
     # table's column list is present in the prompt.
-    tables = await _expand_fk_neighbours(db, connection_id, tables, max_extra=5)
+    tables = await _expand_fk_neighbours(db, connection_id, tables, question=question, max_extra=5)
 
     # Step 10: Get dictionary entries for all columns (including FK-expanded tables)
     # and relationships between the final table set
@@ -267,32 +268,36 @@ async def _expand_fk_neighbours(
     db: AsyncSession,
     connection_id: uuid.UUID,
     tables: list[LinkedTable],
+    question: str = "",
     max_extra: int = 5,
 ) -> list[LinkedTable]:
     """Expand context by pulling in FK-neighbour tables not yet selected.
 
     For every table already in `tables`, find ALL FK relationships where it is
-    either the source or the target.  Load any referenced table that is not
-    already in context and append it as a LinkedTable with match_reason
-    "fk_neighbour".  This ensures lookup/dimension tables (e.g. BusinessUnit,
-    Designation, TechCategory) are always present so the LLM can read their
-    exact column names.
+    either the source or the target.  Score each neighbour by keyword relevance
+    against the user's question, sort descending, take top-N.
+
+    This ensures lookup/dimension tables (e.g. BusinessUnit, Designation) are
+    present so the LLM can read exact column names — but only when they're
+    actually relevant to the question.  Geography tables (cities, countries)
+    score 0.0 for non-geography questions and are naturally excluded.
 
     Args:
         db: Async SQLAlchemy session.
         connection_id: The connection whose schema is being queried.
         tables: The tables already selected by find_relevant_tables.
+        question: The user's original question (used for keyword scoring).
         max_extra: Cap on how many extra tables to add (prevents context explosion).
 
     Returns:
-        Augmented list of LinkedTable (original tables + FK neighbours).
+        Augmented list of LinkedTable (original tables + scored FK neighbours).
     """
     if not tables:
         return tables
 
+    keywords = extract_keywords(question)
     selected_ids = {lt.table.id for lt in tables}
 
-    # Find ALL FK edges touching any selected table (source OR target side)
     rel_result = await db.execute(
         select(CachedRelationship).where(
             CachedRelationship.connection_id == connection_id,
@@ -304,7 +309,6 @@ async def _expand_fk_neighbours(
     )
     relationships = rel_result.scalars().all()
 
-    # Collect neighbour table IDs not already selected
     neighbour_ids: list[uuid.UUID] = []
     seen: set[uuid.UUID] = set()
     for rel in relationships:
@@ -316,11 +320,24 @@ async def _expand_fk_neighbours(
     if not neighbour_ids:
         return tables
 
-    # Cap to avoid context explosion
-    neighbour_ids = neighbour_ids[:max_extra]
+    scored_neighbours: list[tuple[uuid.UUID, float]] = []
+    for table_id in neighbour_ids:
+        cached_table = await db.get(CachedTable, table_id)
+        if not cached_table:
+            continue
+        score = keyword_match_score(cached_table.table_name, keywords)
+        scored_neighbours.append((table_id, score))
+        logger.debug(
+            "FK-neighbour scoring: table=%s score=%.2f",
+            cached_table.table_name,
+            score,
+        )
+
+    scored_neighbours.sort(key=lambda x: x[1], reverse=True)
+    top_neighbours = scored_neighbours[:max_extra]
 
     extra: list[LinkedTable] = []
-    for table_id in neighbour_ids:
+    for table_id, score in top_neighbours:
         cached_table = await db.get(CachedTable, table_id)
         if not cached_table:
             continue
@@ -336,7 +353,7 @@ async def _expand_fk_neighbours(
             LinkedTable(
                 table=cached_table,
                 columns=columns,
-                score=0.1,
+                score=score,
                 match_reason="fk_neighbour",
             )
         )

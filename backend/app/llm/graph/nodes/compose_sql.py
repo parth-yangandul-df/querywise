@@ -81,10 +81,11 @@ async def compose_sql(state: GraphState) -> dict[str, Any]:
 
     logger.info(
         "compose_sql: generated sql=%r provider=%s model=%s",
-        generated_sql[:80],
+        generated_sql[:200],
         provider.provider_type.value,
         llm_config.model,
     )
+    logger.debug("compose_sql: generated_sql full=%r", generated_sql)
 
     return {
         "generated_sql": generated_sql,

@@ -259,26 +259,26 @@ pre code { background: none; color: inherit; padding: 0; }
 <!-- HERO -->
 <header class="hero" id="top">
   <h1>QueryWise Platform Architecture</h1>
-  <p>A full-stack PRMS (Project Resource Management System) intelligence platform that routes natural-language questions through a LangGraph pipeline — using a 24-intent domain tool catalog for fast structured queries and a full semantic-layer LLM fallback for arbitrary questions.</p>
+  <p>A full-stack text-to-SQL platform that lets people ask business questions in plain language, enriches each question with database and business context, generates or reuses safe SQL, executes it against connected databases, and returns a human-readable answer.</p>
   <div class="badges">
     <span class="badge badge-purple">Python 3.12 &middot; FastAPI</span>
-    <span class="badge badge-blue">React 19 &middot; TypeScript</span>
-    <span class="badge badge-green">PostgreSQL &middot; BigQuery &middot; Databricks</span>
+    <span class="badge badge-blue">React 19 Admin UI &middot; Angular 21 Chat UI</span>
+    <span class="badge badge-green">PostgreSQL &middot; SQL Server &middot; pgvector</span>
     <span class="badge badge-amber">Anthropic &middot; OpenAI &middot; OpenRouter &middot; Groq &middot; Ollama</span>
-    <span class="badge badge-slate">LangGraph &middot; Docker Compose</span>
+    <span class="badge badge-slate">LangGraph &middot; Semantic Layer &middot; Docker Compose</span>
   </div>
 </header>
 
 <!-- ===== 1. SYSTEM OVERVIEW ===== -->
 <section id="overview">
   <h2>System Overview</h2>
-  <p>The platform is organized into five logical layers. A user's natural language question flows top-down through presentation, API, semantic, LLM orchestration, and connector layers before results travel back up. The LLM orchestration layer is now a <strong>LangGraph StateGraph</strong> with two tracks: a fast <em>domain tool path</em> for classified PRMS intents, and a full <em>LLM fallback path</em> using the semantic layer for arbitrary questions.</p>
+  <p>QueryWise is organized into five logical layers. A user's question starts in either the Angular chat UI or React admin UI, enters the FastAPI backend, is routed through a LangGraph conversation pipeline, is enriched by the semantic layer, then runs through a connector against the selected target database. The same pipeline also persists chat sessions, query history, result previews, and follow-up context so later turns can build on earlier answers.</p>
 
   <div class="arch-diagram">
     <div class="layer-stack">
       <div class="layer layer-purple">
         <span class="layer-label">Presentation</span>
-        React 19 SPA &mdash; Mantine UI &mdash; Query Interface, Sessions &amp; Semantic Layer Management
+        Angular Chat UI &mdash; React Admin UI &mdash; Querying, Sessions, Connections &amp; Semantic Metadata
       </div>
       <div class="arrow-down"></div>
       <div class="layer layer-blue">
@@ -288,16 +288,16 @@ pre code { background: none; color: inherit; padding: 0; }
       <div class="arrow-down"></div>
       <div class="sub-layers">
         <div class="layer layer-indigo">
-          <span class="layer-label">Semantic (Fallback)</span>
+          <span class="layer-label">Semantic Context</span>
           Context Builder<br>Schema Linker<br>Knowledge Resolver<br>Prompt Assembler
         </div>
         <div class="layer layer-amber">
           <span class="layer-label">LLM Orchestration</span>
-          LangGraph Pipeline<br>24-Intent Catalog<br>Domain Tools &amp; LLM Fallback
+          LangGraph Pipeline<br>Turn Resolver<br>Composer, Validator, Executor &amp; Interpreter
         </div>
         <div class="layer layer-teal">
           <span class="layer-label">Connector</span>
-          BaseConnector ABC<br>Plugin Registry<br>PG &middot; BQ &middot; Databricks
+          BaseConnector ABC<br>Plugin Registry<br>PostgreSQL &middot; SQL Server
         </div>
       </div>
       <div class="arrow-down"></div>
@@ -330,15 +330,15 @@ pre code { background: none; color: inherit; padding: 0; }
     </div>
     <div class="card card-accent">
       <span class="tag">Frontend</span>
-      <h4>React 19 + TypeScript 5.9</h4>
+      <h4>React Admin + Angular Chat</h4>
       <ul>
-        <li><strong>Build:</strong> Vite 7.3 (dev proxy for /api)</li>
-        <li><strong>UI Library:</strong> Mantine 8.3 (AppShell, forms, notifications)</li>
-        <li><strong>Server State:</strong> TanStack React Query 5</li>
-        <li><strong>Routing:</strong> React Router 7</li>
-        <li><strong>HTTP:</strong> Axios 1.13</li>
-        <li><strong>Code Editor:</strong> Monaco Editor 4.7</li>
-        <li><strong>Icons:</strong> Tabler Icons 3.37</li>
+        <li><strong>Admin UI:</strong> React 19, TypeScript, Vite, Mantine</li>
+        <li><strong>Chat UI:</strong> Angular 21 on port 4200</li>
+        <li><strong>Server State:</strong> TanStack React Query in the admin UI</li>
+        <li><strong>Routing:</strong> React Router for admin navigation</li>
+        <li><strong>Streaming:</strong> Angular consumes query progress over SSE</li>
+        <li><strong>Tables:</strong> Search, sort, pagination, row count, CSV export</li>
+        <li><strong>UX:</strong> Sessions, clarification chips, SQL display, result tables</li>
       </ul>
     </div>
     <div class="card card-accent">
@@ -349,21 +349,22 @@ pre code { background: none; color: inherit; padding: 0; }
         <li><strong>OpenAI:</strong> GPT completions + text-embedding-3-small</li>
         <li><strong>Ollama:</strong> Local inference (llama3.1:8b + nomic-embed-text)</li>
         <li><strong>OpenRouter:</strong> Multi-model gateway (default: deepseek/deepseek-v3.2)</li>
-        <li><strong>Groq:</strong> Fast inference (default: moonshotai/kimi-k2-instruct)</li>
-        <li><strong>Embeddings:</strong> OpenAI or Ollama (auto-derived from provider)</li>
+        <li><strong>Groq:</strong> Fast inference provider option</li>
+        <li><strong>Embeddings:</strong> OpenAI, Ollama, or explicit embedding provider override</li>
         <li><strong>Temperature:</strong> Always 0.0 (deterministic)</li>
       </ul>
     </div>
     <div class="card card-accent">
       <span class="tag">Infrastructure</span>
-      <h4>Docker Compose &mdash; 5 Services</h4>
+      <h4>Docker Compose &mdash; Core Services</h4>
       <ul>
-        <li><strong>app-db:</strong> pgvector/pgvector:pg16 (port 5432)</li>
-        <li><strong>sample-db:</strong> postgres:16 (port 5433)</li>
+        <li><strong>app-db:</strong> pgvector/pgvector:pg16 (host port 5434)</li>
         <li><strong>backend:</strong> FastAPI + uvicorn (port 8000)</li>
+        <li><strong>frontend:</strong> React admin UI via Vite (port 5173)</li>
+        <li><strong>chat UI:</strong> Angular app run separately on port 4200</li>
         <li><strong>ollama:</strong> ollama/ollama (port 11434, profile: ollama-docker)</li>
-        <li><strong>frontend:</strong> Vite dev server (port 5173)</li>
-        <li><strong>Healthchecks:</strong> pg_isready on both databases</li>
+        <li><strong>pgAdmin:</strong> Optional profile on port 5050</li>
+        <li><strong>Healthchecks:</strong> app database readiness before backend start</li>
       </ul>
     </div>
   </div>
@@ -372,33 +373,35 @@ pre code { background: none; color: inherit; padding: 0; }
 <!-- ===== 3. PRESENTATION LAYER ===== -->
 <section id="presentation">
   <h2>Presentation Layer</h2>
-  <p>A single-page React application using Mantine's AppShell layout with a fixed sidebar for navigation. TanStack React Query manages all server state with query key-based caching and automatic invalidation on mutations.</p>
+  <p>QueryWise has two user-facing surfaces. The React admin UI manages connections, schema introspection, users, and the semantic layer. The Angular chat UI is the end-user conversational experience, streaming backend progress while the query pipeline understands, generates, validates, executes, and explains each answer.</p>
 
   <h3>Application Shell</h3>
   <div class="card-grid card-grid-3">
     <div class="card">
-      <h4>Header (56px)</h4>
-      <p>"QueryWise" branding + subtitle</p>
+      <h4>React Admin UI</h4>
+      <p>Mantine AppShell for authenticated configuration and metadata management</p>
     </div>
     <div class="card">
-      <h4>Sidebar (220px)</h4>
-      <p>NavLink items with Tabler icons, active state tracking via pathname</p>
+      <h4>Angular Chat UI</h4>
+      <p>Conversational interface with sessions, streamed stages, SQL display, and result tables</p>
     </div>
     <div class="card">
-      <h4>Main Content</h4>
-      <p>React Router Outlet renders active page</p>
+      <h4>Backend-Owned Context</h4>
+      <p>Clients send a question and session ID; history and follow-up state are loaded by the backend</p>
     </div>
   </div>
 
   <h3>Pages</h3>
   <div class="card-grid card-grid-3">
-    <div class="card"><h4>QueryPage</h4><p>NL input with session/conversation support, connection selector, SQL preview, results table with summary/highlights/follow-ups. Execute-SQL mode. Ctrl+Enter shortcut.</p></div>
-    <div class="card"><h4>ConnectionsPage</h4><p>CRUD for database connections. Test, introspect, expandable schema explorer.</p></div>
-    <div class="card"><h4>GlossaryPage</h4><p>Business glossary terms. Create/edit modal with SQL expression, related tables/columns.</p></div>
-    <div class="card"><h4>MetricsPage</h4><p>Named metric definitions. SQL expression, aggregation type, dimensions.</p></div>
-    <div class="card"><h4>DictionaryPage</h4><p>Column value mappings. Cascading connection &rarr; table &rarr; column selection.</p></div>
-    <div class="card"><h4>KnowledgePage</h4><p>Import business documentation (paste text or fetch URL). View chunks, delete documents.</p></div>
-    <div class="card"><h4>HistoryPage</h4><p>Query execution log with favorites, expandable SQL/summary, retry badges, session linking.</p></div>
+    <div class="card"><h4>Chat Experience</h4><p>Natural-language input, session creation, streamed progress, clarification options, SQL reveal, result table, suggested follow-ups, and CSV export.</p></div>
+    <div class="card"><h4>Connections</h4><p>Create, test, update, delete, and introspect PostgreSQL or SQL Server connections. Connection strings are encrypted at rest.</p></div>
+    <div class="card"><h4>Schema Explorer</h4><p>Browse cached tables, columns, relationships, sample values, and introspection status for each connection.</p></div>
+    <div class="card"><h4>Glossary</h4><p>Business terms, definitions, related tables/columns, and optional SQL expressions used to teach the system company language.</p></div>
+    <div class="card"><h4>Metrics</h4><p>Named business calculations with SQL expressions, aggregation type, and dimensions for consistent reporting logic.</p></div>
+    <div class="card"><h4>Dictionary</h4><p>Column value mappings that explain coded values or business-specific labels to the query composer.</p></div>
+    <div class="card"><h4>Knowledge</h4><p>Import text, HTML, or URL content. The backend chunks and embeds it so policy and domain docs can influence answers.</p></div>
+    <div class="card"><h4>History &amp; Sessions</h4><p>Persisted conversation history, favorites, summaries, SQL, result previews, retry counts, and turn context for follow-ups.</p></div>
+    <div class="card"><h4>User/Admin</h4><p>Authentication, users, scoped access, and administrative views for operating the platform.</p></div>
   </div>
 
   <h3>State Management Pattern</h3>
@@ -426,7 +429,12 @@ pre code { background: none; color: inherit; padding: 0; }
       <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
     </thead>
     <tbody>
-      <tr><td class="col-method get">GET</td><td><code>/health</code></td><td>Health check</td></tr>
+      <tr><td class="col-method get">GET</td><td><code>/health</code></td><td>Liveness check</td></tr>
+      <tr><td class="col-method get">GET</td><td><code>/ready</code></td><td>Database readiness check</td></tr>
+      <tr><td colspan="3" style="background:#f8fafc; font-weight:700; font-size:12px; color:#64748b;">AUTH &amp; USERS</td></tr>
+      <tr><td class="col-method post">POST</td><td><code>/auth/login</code></td><td>Authenticate user and issue JWT</td></tr>
+      <tr><td class="col-method get">GET</td><td><code>/users</code></td><td>List users for administration</td></tr>
+      <tr><td class="col-method get">GET</td><td><code>/admin</code></td><td>Administrative operations and diagnostics</td></tr>
       <tr><td colspan="3" style="background:#f8fafc; font-weight:700; font-size:12px; color:#64748b; letter-spacing:0.5px;">CONNECTIONS</td></tr>
       <tr><td class="col-method get">GET</td><td><code>/connections</code></td><td>List all connections</td></tr>
       <tr><td class="col-method post">POST</td><td><code>/connections</code></td><td>Create connection (encrypts conn string)</td></tr>
@@ -466,6 +474,7 @@ pre code { background: none; color: inherit; padding: 0; }
       <tr><td class="col-method post">POST</td><td><code>/connections/{id}/sample-queries</code></td><td>Create sample query</td></tr>
       <tr><td colspan="3" style="background:#f8fafc; font-weight:700; font-size:12px; color:#64748b;">QUERY</td></tr>
       <tr><td class="col-method post">POST</td><td><code>/query</code></td><td>Full NL &rarr; LangGraph pipeline &rarr; execute &rarr; interpret</td></tr>
+      <tr><td class="col-method post">POST</td><td><code>/query/stream</code></td><td>Same pipeline with SSE progress and final result event</td></tr>
       <tr><td class="col-method post">POST</td><td><code>/query/execute-sql</code></td><td>Execute user-provided SQL directly (no LLM)</td></tr>
       <tr><td class="col-method post">POST</td><td><code>/query/sql-only</code></td><td>Generate SQL without executing</td></tr>
       <tr><td colspan="3" style="background:#f8fafc; font-weight:700; font-size:12px; color:#64748b;">HISTORY</td></tr>
@@ -479,9 +488,9 @@ pre code { background: none; color: inherit; padding: 0; }
 <!-- ===== 5. SEMANTIC LAYER ===== -->
 <section id="semantic">
   <h2>Semantic Layer <span class="badge badge-purple" style="font-size:10px; vertical-align:middle;">Core IP</span></h2>
-  <p>The semantic layer is used by the <strong>LLM fallback path</strong> when the intent classifier confidence is below the threshold (0.65). It selects the most relevant database context for the NL question using a hybrid strategy: <strong>vector similarity + keyword matching + foreign key graph traversal</strong>. Imported business knowledge is chunked, embedded, and injected as additional context.</p>
+  <p>The semantic layer is the business context engine. It turns raw database metadata, business terms, metric definitions, sample queries, value dictionaries, and imported documentation into a compact prompt that the SQL composer can use. It combines <strong>vector similarity, keyword scoring, relationship expansion, glossary resolution, metric resolution, knowledge retrieval, and RBAC scope constraints</strong> so the LLM sees the right tables and business rules instead of the whole database.</p>
 
-  <h3>Context Building Pipeline (8 Steps)</h3>
+  <h3>Context Building Pipeline (11 Steps)</h3>
   <div class="flow">
     <div class="flow-step">
       <span class="step-num">1</span>
@@ -491,50 +500,68 @@ pre code { background: none; color: inherit; padding: 0; }
     <div class="flow-arrow"></div>
     <div class="flow-step">
       <span class="step-num">2</span>
-      <span class="step-title">Vector Search</span>
-      <div class="step-desc">pgvector cosine distance against <code>cached_tables.description_embedding</code> &mdash; top 15 candidates</div>
+      <span class="step-title">Find Relevant Tables</span>
+      <div class="step-desc">Hybrid table discovery combines pgvector similarity with keyword matching against table names, column names, and comments</div>
     </div>
     <div class="flow-arrow"></div>
     <div class="flow-step">
       <span class="step-num">3</span>
-      <span class="step-title">Keyword Matching</span>
-      <div class="step-desc">Extract keywords (stop-word filtered), ILIKE match against table/column names. Scores: exact=1.0, component=0.7, substring=0.5</div>
+      <span class="step-title">Resolve Glossary Terms</span>
+      <div class="step-desc">Match business terms by text and embeddings, then attach definitions, SQL expressions, and related tables</div>
     </div>
     <div class="flow-arrow"></div>
     <div class="flow-step">
       <span class="step-num">4</span>
-      <span class="step-title">FK Graph Expansion</span>
-      <div class="step-desc">From top 5 scored candidates, walk foreign key constraints to include necessary JOIN tables (relationship_score = 1.0)</div>
+      <span class="step-title">Inject Glossary-Linked Tables</span>
+      <div class="step-desc">If a matched term points to a table that was not discovered yet, add it so business language can pull in the right schema</div>
     </div>
     <div class="flow-arrow"></div>
     <div class="flow-step" style="background:#f5f3ff; border-color:#a78bfa;">
       <span class="step-num">5</span>
-      <span class="step-title">Score &amp; Prune</span>
-      <div class="step-desc">Weighted scoring formula, keep top 8 tables (MAX_CONTEXT_TABLES) with all their columns</div>
+      <span class="step-title">Resolve Metrics</span>
+      <div class="step-desc">Find named calculations and dimensions so questions like revenue, utilization, or margin use the governed definition</div>
     </div>
     <div class="flow-arrow"></div>
     <div class="flow-step">
       <span class="step-num">6</span>
-      <span class="step-title">Resolve Glossary, Metrics, Knowledge, Dictionary</span>
-      <div class="step-desc">Match business terms + metric names in question text &amp; by embedding similarity. Find top 5 knowledge chunks by vector similarity (keyword ILIKE fallback). Fetch value mappings for selected columns.</div>
+      <span class="step-title">Retrieve Knowledge Chunks</span>
+      <div class="step-desc">Search imported text, HTML, and URL documents for policies, definitions, or domain rules related to the question</div>
     </div>
     <div class="flow-arrow"></div>
     <div class="flow-step">
       <span class="step-num">7</span>
       <span class="step-title">Find Similar Sample Queries</span>
-      <div class="step-desc">Top 3 validated sample queries by embedding similarity &mdash; used as few-shot examples</div>
+      <div class="step-desc">Retrieve up to 3 validated NL-to-SQL examples; high-similarity examples can also become a trusted shortcut later in the graph</div>
     </div>
     <div class="flow-arrow"></div>
     <div class="flow-step step-success">
       <span class="step-num">8</span>
+      <span class="step-title">Infer and Expand Relationships</span>
+      <div class="step-desc">Use declared relationships and foreign-key neighbours to include likely join paths, scored against the question</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-step">
+      <span class="step-num">9</span>
+      <span class="step-title">Load Dictionaries</span>
+      <div class="step-desc">Add value mappings for selected columns so coded values and business labels are interpreted correctly</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-step">
+      <span class="step-num">10</span>
+      <span class="step-title">Apply Scope Constraints</span>
+      <div class="step-desc">When the user has a resource or employee scope, prepend deterministic instructions and skip unsafe shortcuts</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-step step-success">
+      <span class="step-num">11</span>
       <span class="step-title">Assemble Prompt</span>
-      <div class="step-desc">Format into structured sections: Schema &rarr; Relationships &rarr; Glossary &rarr; Metrics &rarr; Knowledge &rarr; Dictionary &rarr; Examples &rarr; Constraints</div>
+      <div class="step-desc">Format into structured sections: schema, relationships, glossary, metrics, knowledge, dictionary, examples, and constraints</div>
     </div>
   </div>
 
   <h3>Relevance Scoring Formula</h3>
   <div style="background:#1e1e2e; color:#cdd6f4; padding:20px 28px; border-radius:10px; font-family:monospace; font-size:16px; text-align:center; margin:16px 0;">
-    score = <span style="color:#89b4fa; font-weight:700;">0.5</span> <span style="color:#f38ba8;">&times;</span> <span style="color:#a6e3a1;">embedding</span> <span style="color:#f38ba8;">+</span> <span style="color:#89b4fa; font-weight:700;">0.3</span> <span style="color:#f38ba8;">&times;</span> <span style="color:#a6e3a1;">keyword</span> <span style="color:#f38ba8;">+</span> <span style="color:#89b4fa; font-weight:700;">0.2</span> <span style="color:#f38ba8;">&times;</span> <span style="color:#a6e3a1;">fk_proximity</span> <span style="color:#f38ba8;">+</span> <span style="color:#a6e3a1;">glossary_boost</span>
+    relevance = <span style="color:#a6e3a1;">semantic match</span> <span style="color:#f38ba8;">+</span> <span style="color:#a6e3a1;">keyword match</span> <span style="color:#f38ba8;">+</span> <span style="color:#a6e3a1;">business-term boost</span> <span style="color:#f38ba8;">+</span> <span style="color:#a6e3a1;">relationship fit</span>
   </div>
 
   <h3>Semantic Metadata Types</h3>
@@ -557,7 +584,7 @@ pre code { background: none; color: inherit; padding: 0; }
     </div>
     <div class="card">
       <h4>Sample Queries</h4>
-      <p>Validated NL&rarr;SQL pairs used as few-shot examples. Top 3 by embedding similarity.</p>
+      <p>Validated NL&rarr;SQL pairs used as few-shot examples, and as trusted SQL shortcuts when similarity is high and scope rules allow it.</p>
     </div>
   </div>
 </section>
@@ -565,35 +592,47 @@ pre code { background: none; color: inherit; padding: 0; }
 <!-- ===== 6. LLM ORCHESTRATION ===== -->
 <section id="llm">
   <h2>LLM Orchestration Layer</h2>
-  <p>The core intelligence pipeline is a <strong>LangGraph StateGraph</strong> compiled as a singleton at startup. It implements two execution tracks: a fast <em>domain tool track</em> for classified PRMS intents (no SQL generation), and a full <em>LLM fallback track</em> with the semantic layer and 4 specialized agents.</p>
+  <p>The core intelligence pipeline is a <strong>LangGraph StateGraph</strong> compiled as a singleton. It is no longer the older intent-template router. Instead, it is a multi-turn conversation workflow that loads prior context, resolves what the user is asking for now, chooses the right path, validates SQL before execution, retries correctable failures, interprets results, and writes an auditable history record.</p>
 
   <h3>LangGraph Graph Topology</h3>
-<pre><code>classify_intent
-     |
-     ├─ confidence >= 0.65 → extract_params → run_domain_tool
-     │                                         ├─ rows > 0 → interpret_result
-     │                                         └─ 0 rows + fallback_intent? → run_fallback_intent
-     │                                                          ├─ rows > 0 → interpret_result
-     │                                                          └─ 0 rows   → llm_fallback
-     └─ confidence < 0.65  → llm_fallback
-                                    │
-                              interpret_result
-                                    │
-                              write_history → END</code></pre>
+<pre><code>load_history
+  → resolve_turn
+     ├─ query                         → build_context → similarity_check
+     │                                                ├─ trusted sample SQL → execute_sql
+     │                                                └─ compose_sql → validate_sql
+     ├─ follow_up_query_refinement    → handle_follow_up → validate_sql or write_history
+     ├─ show_sql / explain_result     → answer_from_state
+     └─ clarification                 → write_history
+
+validate_sql → execute_sql or handle_error
+handle_error → validate_sql / execute_sql / write_history
+execute_sql  → interpret_result or handle_error
+interpret_result → write_history → END</code></pre>
 
   <h3>GraphState — Shared Pipeline State</h3>
 <pre><code><span class="kw">class</span> <span class="fn">GraphState</span>(TypedDict):
     <span class="cmt"># Inputs</span>
     question: str
     connection_id: str          <span class="cmt"># UUID as str</span>
+    connector_type: str
+    connection_string: str      <span class="cmt"># decrypted only inside backend state</span>
     session_id: str | None      <span class="cmt"># chat thread identifier</span>
-    conversation_history: list[dict]  <span class="cmt"># [{role, content}, ...]</span>
+    db: AsyncSession
 
-    <span class="cmt"># Classification</span>
-    domain: str | None          <span class="cmt"># "resource"|"client"|"project"|"timesheet"</span>
-    intent: str | None          <span class="cmt"># e.g. "active_resources"</span>
-    confidence: float
-    params: dict[str, Any]      <span class="cmt"># skill, dates, names (regex extracted)</span>
+    <span class="cmt"># Auth and conversation state</span>
+    user_id: str | None
+    user_role: str | None
+    resource_id: str | None
+    employee_id: str | None
+    loaded_history: list[dict]
+    last_generated_sql: str | None
+    last_result_preview_rows: list[list] | None
+
+    <span class="cmt"># Turn resolution</span>
+    action: str | None          <span class="cmt"># query, follow_up_query_refinement, show_sql, explain_result, clarification</span>
+    resolved_question: str | None
+    clarification_message: str | None
+    clarification_options: list[str]
 
     <span class="cmt"># Execution</span>
     sql: str | None
@@ -611,117 +650,85 @@ pre code { background: none; color: inherit; padding: 0; }
   <h3>Graph Nodes</h3>
   <div class="card-grid card-grid-2">
     <div class="card" style="border-left:3px solid #818cf8;">
-      <h4>classify_intent</h4>
-      <p><strong>Method:</strong> Embeds the question, runs cosine similarity against all 24 pre-embedded catalog entries.</p>
-      <p><strong>Output:</strong> <code>domain</code>, <code>intent</code>, <code>confidence</code></p>
-      <p><strong>Threshold:</strong> <code>TOOL_CONFIDENCE_THRESHOLD=0.65</code> (env override). Logs top-3 scores for tuning.</p>
+      <h4>load_history</h4>
+      <p>Loads recent session messages plus the last successful query context from <code>query_executions</code>.</p>
+      <p>This gives the graph enough memory to answer "show the SQL", "explain that result", or follow-up refinements.</p>
     </div>
     <div class="card" style="border-left:3px solid #3b82f6;">
-      <h4>extract_params</h4>
-      <p><strong>Method:</strong> Pure regex extraction — no LLM call. Extracts: <code>skill</code>, <code>start_date</code>, <code>end_date</code>, <code>project_name</code>, <code>client_name</code>, <code>resource_name</code>.</p>
-      <p><strong>Patterns:</strong> ISO dates, Title Case names, project/client keywords.</p>
+      <h4>resolve_turn</h4>
+      <p>Classifies the message as a fresh query, follow-up refinement, show-SQL request, result explanation, or clarification.</p>
+      <p>It also rewrites follow-up wording into a standalone resolved question when needed.</p>
     </div>
     <div class="card" style="border-left:3px solid #10b981;">
-      <h4>run_domain_tool</h4>
-      <p><strong>Method:</strong> Dispatches to one of 4 domain modules (resource, client, project, timesheet) based on <code>intent</code>. Runs a pre-built parameterized SQL query directly against the connector.</p>
-      <p><strong>Output:</strong> <code>sql</code>, <code>result</code>. If 0 rows and <code>fallback_intent</code> set, routes to <code>run_fallback_intent</code>.</p>
+      <h4>build_context</h4>
+      <p>Calls the semantic context builder to gather schema, glossary, metrics, knowledge, dictionaries, examples, and access-scope constraints.</p>
     </div>
     <div class="card" style="border-left:3px solid #f59e0b;">
-      <h4>llm_fallback</h4>
-      <p><strong>Trigger:</strong> Confidence &lt; threshold, or domain tool 0-row result with no fallback.</p>
-      <p><strong>Method:</strong> Full semantic context build &rarr; LLM SQL generation &rarr; validation &rarr; error-handler retry (max 3) &rarr; connector execution.</p>
+      <h4>similarity_check</h4>
+      <p>Compares the question to validated sample queries. A high-confidence match can reuse trusted stored SQL and skip composition.</p>
+      <p>Shortcuts are skipped when user scope constraints make reuse unsafe.</p>
     </div>
     <div class="card" style="border-left:3px solid #8b5cf6;">
-      <h4>interpret_result</h4>
-      <p><strong>Input:</strong> Question + SQL + result rows</p>
-      <p><strong>Output:</strong> <code>answer</code> (NL summary) + <code>highlights</code> + <code>suggested_followups</code></p>
-      <p><strong>Called for both paths.</strong></p>
+      <h4>compose_sql &amp; validate_sql</h4>
+      <p>The composer generates SQL from the resolved question and semantic prompt. The validator checks SQL safety and schema references before anything runs.</p>
     </div>
     <div class="card" style="border-left:3px solid #64748b;">
-      <h4>write_history</h4>
-      <p>Persists a <code>QueryExecution</code> record including <code>session_id</code>, SQL, timing, token counts, <code>llm_provider</code>, <code>retry_count</code>, and summary.</p>
+      <h4>execute, interpret, write</h4>
+      <p>The connector executes read-only SQL, the interpreter writes the plain-English answer, and <code>write_history</code> saves SQL, preview rows, summary, status, and turn context.</p>
     </div>
   </div>
 
-  <h3>24-Intent Catalog (PRMS Domain)</h3>
+  <h3>Turn Actions</h3>
   <div class="card-grid card-grid-4">
     <div class="card" style="border-top:3px solid #818cf8;">
-      <h4>Resource (9)</h4>
-      <ul>
-        <li>active_resources</li>
-        <li>resource_by_skill</li>
-        <li>resource_utilization</li>
-        <li>resource_billing_rate</li>
-        <li>resource_availability</li>
-        <li>resource_project_assignments</li>
-        <li>resource_timesheet_summary</li>
-        <li>overallocated_resources</li>
-        <li>resource_skills_list</li>
-      </ul>
+      <h4>query</h4>
+      <p>Fresh database question. Build semantic context, compose or reuse SQL, validate, execute, interpret.</p>
     </div>
     <div class="card" style="border-top:3px solid #3b82f6;">
-      <h4>Client (5)</h4>
-      <ul>
-        <li>active_clients</li>
-        <li>client_projects</li>
-        <li>client_revenue</li>
-        <li>client_status</li>
-        <li>top_clients_by_revenue</li>
-      </ul>
+      <h4>follow_up_query_refinement</h4>
+      <p>Uses prior turn context. Can reuse an answer, rewrite SQL, or escalate back to full context building.</p>
     </div>
     <div class="card" style="border-top:3px solid #10b981;">
-      <h4>Project (6)</h4>
-      <ul>
-        <li>active_projects</li>
-        <li>project_by_client</li>
-        <li>project_budget</li>
-        <li>project_resources</li>
-        <li>project_timeline</li>
-        <li>overdue_projects</li>
-      </ul>
+      <h4>show_sql</h4>
+      <p>Returns the last generated or executed SQL from saved state without querying the database again.</p>
     </div>
     <div class="card" style="border-top:3px solid #f59e0b;">
-      <h4>Timesheet (4)</h4>
-      <ul>
-        <li>approved_timesheets</li>
-        <li>timesheet_by_period</li>
-        <li>unapproved_timesheets</li>
-        <li>timesheet_by_project</li>
-      </ul>
+      <h4>explain_result / clarification</h4>
+      <p>Explains a prior result from preview data, or asks the user to clarify when the request is not safe or specific enough.</p>
     </div>
   </div>
-  <div class="note">Catalog entries are pre-embedded at startup via <code>ensure_catalog_embedded()</code> so the first query does not pay the embedding cost. Embeddings are stored in-memory on <code>IntentEntry.embedding</code>.</div>
+  <div class="note">The optional follow-up path is controlled by <code>USE_FOLLOW_UP_PATH</code>. When disabled, ambiguous follow-ups fall back to the normal query path or clarification behavior.</div>
 
-  <h3>Complexity Router (LLM Fallback Path)</h3>
+  <h3>Role-Based Model Routing</h3>
   <table>
     <thead>
-      <tr><th>Tier</th><th>Signal Keywords</th><th>Max Tokens</th></tr>
+      <tr><th>Role</th><th>Purpose</th><th>Typical Model Setting</th></tr>
     </thead>
     <tbody>
       <tr>
-        <td><span class="badge badge-green">Simple</span></td>
-        <td><code>what is</code>, <code>show me</code>, single entity lookups</td>
-        <td>512</td>
+        <td><span class="badge badge-green">Resolver</span></td>
+        <td>Turn classification, follow-up detection, and resolved-question rewrite</td>
+        <td><code>RESOLVER_MODEL</code> when using OpenRouter</td>
       </tr>
       <tr>
-        <td><span class="badge badge-blue">Moderate</span></td>
-        <td><code>group</code>, <code>total</code>, <code>average</code>, <code>join</code>, <code>top N</code>, <code>filter</code></td>
-        <td>768</td>
+        <td><span class="badge badge-blue">Composer</span></td>
+        <td>SQL generation and correction using semantic context</td>
+        <td><code>DEFAULT_LLM_MODEL</code> or <code>OPENROUTER_MODEL</code></td>
       </tr>
       <tr>
-        <td><span class="badge badge-purple">Complex</span></td>
-        <td><code>compare</code>, <code>trend</code>, <code>window</code>, <code>percentile</code>, <code>cohort</code>, <code>year-over-year</code></td>
-        <td>1,024</td>
+        <td><span class="badge badge-purple">Interpreter</span></td>
+        <td>Convert rows into a concise answer, highlights, and suggested follow-ups</td>
+        <td><code>INTERPRETER_MODEL</code></td>
       </tr>
     </tbody>
   </table>
-  <div class="note">All tiers use the <strong>same model</strong> (configured via <code>DEFAULT_LLM_PROVIDER</code> / <code>DEFAULT_LLM_MODEL</code>). Only <code>max_tokens</code> differs. Temperature is always <code>0.0</code>.</div>
+  <div class="note">All provider calls use temperature <code>0.0</code> for deterministic behavior. OpenRouter can split resolver, composer, and interpreter roles across different configured models.</div>
 
-  <h3>Four Specialized Agents (LLM Fallback)</h3>
+  <h3>Specialized Agents</h3>
   <div class="card-grid card-grid-2">
     <div class="card" style="border-left:3px solid #818cf8;">
       <h4>QueryComposerAgent</h4>
-      <p><strong>Input:</strong> NL question + assembled context + conversation_history</p>
+      <p><strong>Input:</strong> Resolved question + assembled semantic context</p>
       <p><strong>Output:</strong> SQL + explanation + confidence (0&ndash;1) + tables_used + assumptions</p>
       <p><strong>Response:</strong> JSON parse with regex fallback for code-fenced SQL</p>
     </div>
@@ -735,7 +742,7 @@ pre code { background: none; color: inherit; padding: 0; }
       <h4>ResultInterpreterAgent</h4>
       <p><strong>Input:</strong> Question + SQL + results preview (max 20 rows)</p>
       <p><strong>Output:</strong> NL summary + key highlights + suggested follow-up questions</p>
-      <p><strong>Also called for domain tool results.</strong></p>
+      <p><strong>Empty rows:</strong> Returns an explicit "No matching rows found." response.</p>
     </div>
     <div class="card" style="border-left:3px solid #ef4444;">
       <h4>ErrorHandlerAgent</h4>
@@ -755,13 +762,13 @@ pre code { background: none; color: inherit; padding: 0; }
     <span class="kw">async def</span> <span class="fn">generate_embedding</span>(text: str) -&gt; list[float]  <span class="cmt"># OpenAI: 1536-dim, Ollama: 768-dim</span>
     <span class="kw">def</span> <span class="fn">list_models</span>() -&gt; list[str]</code></pre>
 
-  <div class="note"><strong>Embedding resolution:</strong> Providers without embeddings (Anthropic, OpenRouter, Groq) automatically fall back to OpenAI embeddings. Override via <code>EMBEDDING_PROVIDER</code> env variable.</div>
+  <div class="note"><strong>Embedding resolution:</strong> Embeddings can come from OpenAI, Ollama, or an explicit <code>EMBEDDING_PROVIDER</code>. If embeddings are unavailable, parts of the semantic layer degrade to keyword-oriented retrieval instead of failing the whole query.</div>
 </section>
 
 <!-- ===== 7. CONNECTOR LAYER ===== -->
 <section id="connectors">
   <h2>Connector Layer</h2>
-  <p>A plugin system for database connectivity. All connectors implement <code>BaseConnector</code> ABC and are registered in a global registry with connection pooling and health checks.</p>
+  <p>A plugin system for database connectivity. All connectors implement <code>BaseConnector</code>, are resolved through <code>connector_registry.py</code>, and are cached by connection ID with stale-connection cleanup. The connector layer is where read-only execution, timeouts, row limits, schema introspection, and sample value lookup meet the real target database.</p>
 
   <h3>BaseConnector Interface</h3>
 <pre><code><span class="kw">class</span> <span class="fn">BaseConnector</span>(ABC):
@@ -783,26 +790,26 @@ pre code { background: none; color: inherit; padding: 0; }
       <p>asyncpg pool, read-only transactions, statement timeout, double-quote identifier quoting</p>
     </div>
     <div class="card" style="text-align:center;">
-      <h4>BigQuery</h4>
-      <span class="tag-sm impl">Implemented</span>
-      <p>google-cloud-bigquery SDK, service account JSON auth, backtick quoting, read-only via SQL blocklist</p>
+      <h4>SQL Server</h4>
+      <span class="tag-sm impl">Implemented when optional dependency is installed</span>
+      <p>aioodbc-based connector, lazy-registered only when SQL Server extras and ODBC driver are available</p>
     </div>
     <div class="card" style="text-align:center;">
-      <h4>Databricks</h4>
-      <span class="tag-sm impl">Implemented</span>
-      <p>databricks-sql-connector SDK, PAT auth, Unity Catalog + Hive metastore, backtick quoting</p>
+      <h4>Connector Registry</h4>
+      <span class="tag-sm impl">Extensible</span>
+      <p>New connectors can be added by extending <code>BaseConnector</code> and registering the class by connector type</p>
     </div>
   </div>
   <div class="card-grid card-grid-2" style="margin-top:12px;">
     <div class="card" style="text-align:center;">
-      <h4>MySQL</h4>
+      <h4>Future Connectors</h4>
       <span class="tag-sm plan">Planned</span>
-      <p>ConnectorType enum defined</p>
+      <p>Additional databases can be added by implementing the same connector contract and registering the connector class</p>
     </div>
     <div class="card" style="text-align:center;">
-      <h4>Snowflake</h4>
-      <span class="tag-sm plan">Planned</span>
-      <p>ConnectorType enum defined</p>
+      <h4>Connector Cache</h4>
+      <span class="tag-sm impl">Implemented</span>
+      <p>Up to 50 active connectors are cached; least-recently-used and stale connectors are disconnected automatically</p>
     </div>
   </div>
 </section>
@@ -810,85 +817,97 @@ pre code { background: none; color: inherit; padding: 0; }
 <!-- ===== 8. QUERY FLOW ===== -->
 <section id="query-flow">
   <h2>Query Flow Pipeline</h2>
-  <p>End-to-end flow when a user submits a natural language question through <code>POST /api/v1/query</code>. The request carries an optional <code>session_id</code> and <code>conversation_history</code> for multi-turn chat context.</p>
+  <p>End-to-end flow when a user submits a natural language question through <code>POST /api/v1/query</code> or <code>POST /api/v1/query/stream</code>. The client sends the selected connection, the question, and optionally a <code>session_id</code>. The backend owns conversation history and loads it from stored executions.</p>
 
-  <h3>Domain Tool Path (Fast Track)</h3>
+  <h3>Standard Query Path</h3>
   <div class="flow">
     <div class="flow-step" style="border-color:#a78bfa; background:#f5f3ff;">
       <span class="step-num">1</span>
       <span class="step-title">User submits NL question</span>
-      <div class="step-desc">"Show me active resources" &mdash; with optional session_id + conversation_history</div>
+      <div class="step-desc">"Show revenue by client this quarter" &mdash; with connection_id, optional session_id, and optional clear_context flag</div>
     </div>
     <div class="flow-arrow"></div>
     <div class="flow-step">
       <span class="step-num">2</span>
-      <span class="step-title">classify_intent</span>
-      <div class="step-desc">Embed question &rarr; cosine similarity against 24 pre-embedded catalog entries &rarr; gets domain=resource, intent=active_resources, confidence=0.87</div>
+      <span class="step-title">query_service builds GraphState</span>
+      <div class="step-desc">Loads the connection, decrypts its connection string, injects auth scope, max rows, timeout, session ID, and streaming queue</div>
     </div>
     <div class="flow-arrow"></div>
     <div class="flow-step">
       <span class="step-num">3</span>
-      <span class="step-title">extract_params</span>
-      <div class="step-desc">Pure regex extraction. For this query: no skill/date/name params extracted. params={}</div>
+      <span class="step-title">load_history &rarr; resolve_turn</span>
+      <div class="step-desc">Loads recent persisted turns and decides whether this is a fresh query, follow-up, show-SQL request, explanation request, or clarification</div>
     </div>
     <div class="flow-arrow"></div>
     <div class="flow-step" style="border-color:#14b8a6;">
       <span class="step-num">4</span>
-      <span class="step-title">run_domain_tool</span>
-      <div class="step-desc">Dispatches to resource domain module &rarr; executes pre-built "active_resources" SQL with extracted params directly via connector. Returns rows.</div>
+      <span class="step-title">build_context &rarr; similarity_check</span>
+      <div class="step-desc">Assembles semantic context. If a validated sample query is a safe high-confidence match, its stored SQL can be reused directly.</div>
     </div>
     <div class="flow-arrow"></div>
     <div class="flow-step step-success">
       <span class="step-num">5</span>
-      <span class="step-title">interpret_result &rarr; write_history</span>
-      <div class="step-desc">LLM generates NL summary + highlights + follow-ups. Record saved to query_executions with llm_provider="domain_tool", session_id linked.</div>
+      <span class="step-title">compose_sql &rarr; validate_sql</span>
+      <div class="step-desc">If no trusted shortcut is used, the composer generates SQL and the validator checks safety and schema references before execution.</div>
     </div>
-  </div>
-
-  <h3>LLM Fallback Path (Arbitrary Questions)</h3>
-  <div class="flow">
-    <div class="flow-step" style="border-color:#a78bfa; background:#f5f3ff;">
-      <span class="step-num">1</span>
-      <span class="step-title">User submits NL question</span>
-      <div class="step-desc">"What is the revenue trend by client over the last 6 months?" &mdash; confidence=0.41 &lt; 0.65</div>
-    </div>
-    <div class="flow-arrow"></div>
-    <div class="flow-step">
-      <span class="step-num">2</span>
-      <span class="step-title">llm_fallback — Context Builder</span>
-      <div class="step-desc">Embed question &rarr; hybrid table search (vector + keyword + FK) &rarr; resolve glossary/metrics/knowledge/dictionary &rarr; find sample queries &rarr; assemble structured prompt</div>
-    </div>
-    <div class="flow-arrow"></div>
-    <div class="flow-step">
-      <span class="step-num">3</span>
-      <span class="step-title">LLM Router</span>
-      <div class="step-desc">Estimate complexity (complex: "trend", "over") &rarr; select configured provider/model with max_tokens=1024, temperature=0.0</div>
-    </div>
-    <div class="flow-arrow"></div>
-    <div class="flow-step" style="border-color:#818cf8;">
-      <span class="step-num">4</span>
-      <span class="step-title">QueryComposerAgent</span>
-      <div class="step-desc">LLM generates SQL from context + question + conversation_history. Parses JSON response (or fallback regex extraction). Returns SQL + explanation + confidence.</div>
-    </div>
-    <div class="flow-arrow"></div>
-    <div class="flow-step step-error">
-      <span class="step-num">5</span>
-      <span class="step-title">SQLValidatorAgent</span>
-      <div class="step-desc">Static blocklist check (DDL/DML/injection) + schema reference validation (sqlparse). If INVALID &rarr; ErrorHandlerAgent retries up to 3x.</div>
-    </div>
-    <div class="flow-arrow"></div>
-    <div class="flow-branch">Retry loop (max 3) &mdash; ErrorHandlerAgent corrects SQL</div>
     <div class="flow-arrow"></div>
     <div class="flow-step" style="border-color:#14b8a6;">
       <span class="step-num">6</span>
-      <span class="step-title">Execute via Connector</span>
-      <div class="step-desc">Read-only transaction + statement timeout + auto LIMIT wrapping. If DB error &rarr; ErrorHandlerAgent retries up to 3x.</div>
+      <span class="step-title">execute_sql via Connector</span>
+      <div class="step-desc">Runs read-only SQL with timeout and row limit. Validation or database failures route to <code>handle_error</code> for correction retries.</div>
     </div>
     <div class="flow-arrow"></div>
     <div class="flow-step step-success">
       <span class="step-num">7</span>
       <span class="step-title">interpret_result &rarr; write_history</span>
-      <div class="step-desc">LLM generates NL summary, highlights, follow-ups. Record saved with session_id, llm_provider, model, token counts, and retry_count.</div>
+      <div class="step-desc">Creates a plain-English answer, highlights, and follow-ups. Persists SQL, preview rows, result_status, retry count, and turn context.</div>
+    </div>
+  </div>
+
+  <h3>Follow-Up and State-Aware Path</h3>
+  <div class="flow">
+    <div class="flow-step" style="border-color:#a78bfa; background:#f5f3ff;">
+      <span class="step-num">1</span>
+      <span class="step-title">User submits NL question</span>
+      <div class="step-desc">"Now only show last month" or "show me the SQL" &mdash; the client sends the same session_id</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-step">
+      <span class="step-num">2</span>
+      <span class="step-title">load_history</span>
+      <div class="step-desc">Fetches compact prior context: resolved question, SQL, answer, columns, result preview rows, and result_status</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-step">
+      <span class="step-num">3</span>
+      <span class="step-title">resolve_turn</span>
+      <div class="step-desc">Chooses between <code>reuse_answer</code>, <code>rewrite_sql</code>, <code>needs_full_compose</code>, <code>show_sql</code>, <code>explain_result</code>, or clarification</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-step" style="border-color:#818cf8;">
+      <span class="step-num">4</span>
+      <span class="step-title">handle_follow_up or answer_from_state</span>
+      <div class="step-desc">Reuses cached answer, sends rewritten SQL through validation, answers from saved state, or escalates to the full context path</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-step step-error">
+      <span class="step-num">5</span>
+      <span class="step-title">Validation still applies</span>
+      <div class="step-desc">Even rewritten follow-up SQL must pass the same SQL safety and schema validation as a fresh query</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-branch">If ambiguous, ask a clarification instead of guessing</div>
+    <div class="flow-arrow"></div>
+    <div class="flow-step" style="border-color:#14b8a6;">
+      <span class="step-num">6</span>
+      <span class="step-title">execute_sql when needed</span>
+      <div class="step-desc">Only database-changing follow-ups rerun SQL; show-SQL and explain-result turns can be answered from stored context</div>
+    </div>
+    <div class="flow-arrow"></div>
+    <div class="flow-step step-success">
+      <span class="step-num">7</span>
+      <span class="step-title">interpret_result &rarr; write_history</span>
+      <div class="step-desc">The new turn is persisted so the next message has a reliable state trail to work from</div>
     </div>
   </div>
 </section>
@@ -906,6 +925,8 @@ pre code { background: none; color: inherit; padding: 0; }
       <div class="er-col"><span>connector_type</span><span class="type">VARCHAR(50)</span></div>
       <div class="er-col"><span>connection_string_encrypted</span><span class="type">TEXT</span></div>
       <div class="er-col"><span>default_schema</span><span class="type">VARCHAR(255)</span></div>
+      <div class="er-col"><span>read_only</span><span class="type">BOOLEAN</span></div>
+      <div class="er-col"><span>allowed_table_names</span><span class="type">TEXT[]</span></div>
       <div class="er-col"><span>max_query_timeout_seconds</span><span class="type">INTEGER</span></div>
       <div class="er-col"><span>max_rows</span><span class="type">INTEGER</span></div>
       <div class="er-col"><span>is_active</span><span class="type">BOOLEAN</span></div>
@@ -1002,6 +1023,8 @@ pre code { background: none; color: inherit; padding: 0; }
           <div class="er-col"><span>execution_time_ms</span><span class="type">FLOAT</span></div>
           <div class="er-col"><span>retry_count</span><span class="type">INTEGER</span></div>
           <div class="er-col"><span>user_id</span><span class="type">VARCHAR(255)</span></div>
+          <div class="er-col"><span>turn_type</span><span class="type">VARCHAR(50)</span></div>
+          <div class="er-col"><span>clarification_reason</span><span class="type">TEXT</span></div>
         </div>
         <div>
           <div class="er-col"><span>llm_provider</span><span class="type">VARCHAR(50)</span></div>
@@ -1009,6 +1032,9 @@ pre code { background: none; color: inherit; padding: 0; }
           <div class="er-col"><span>llm_input_tokens</span><span class="type">INTEGER</span></div>
           <div class="er-col"><span>llm_output_tokens</span><span class="type">INTEGER</span></div>
           <div class="er-col"><span>result_summary</span><span class="type">TEXT</span></div>
+          <div class="er-col"><span>result_columns</span><span class="type">JSONB</span></div>
+          <div class="er-col"><span>result_preview_rows</span><span class="type">JSONB</span></div>
+          <div class="er-col"><span>turn_context</span><span class="type">JSONB</span></div>
           <div class="er-col"><span>is_favorite</span><span class="type">BOOLEAN</span></div>
         </div>
       </div>
@@ -1016,7 +1042,7 @@ pre code { background: none; color: inherit; padding: 0; }
   </div>
 
   <div class="note">
-    <strong>Embedding columns</strong> are present on 6 tables: <code>cached_tables</code>, <code>cached_columns</code>, <code>glossary_terms</code>, <code>metric_definitions</code>, <code>sample_queries</code>, and <code>knowledge_chunks</code>. Dimension N is configurable via <code>EMBEDDING_DIMENSION</code> (1536 for OpenAI, 768 for Ollama). HNSW indexes for fast cosine similarity search. <strong>chat_sessions</strong> is a new table linked to <code>query_executions.session_id</code> for multi-turn conversation tracking.
+    <strong>Embedding columns</strong> are present on 6 tables: <code>cached_tables</code>, <code>cached_columns</code>, <code>glossary_terms</code>, <code>metric_definitions</code>, <code>sample_queries</code>, and <code>knowledge_chunks</code>. Dimension N is configurable via <code>EMBEDDING_DIMENSION</code> (1536 for OpenAI, 768 for Ollama). <strong>chat_sessions</strong> links conversations to <code>query_executions</code>; <code>turn_context</code> stores compact state for follow-ups.
   </div>
 </section>
 
@@ -1029,12 +1055,12 @@ pre code { background: none; color: inherit; padding: 0; }
     <div class="sec-card">
       <span class="icon">&#x1f512;</span>
       <h4>Read-Only Enforcement</h4>
-      <p>PostgreSQL: <code>asyncpg transaction(readonly=True)</code>. BigQuery &amp; Databricks: read-only enforced via SQL blocklist (no native read-only mode).</p>
+      <p>PostgreSQL uses read-only transactions. SQL Server support runs through the connector interface and still passes through shared safety checks before execution.</p>
     </div>
     <div class="sec-card">
       <span class="icon">&#x1f6ab;</span>
       <h4>SQL Blocklist</h4>
-      <p>Static regex patterns block DDL, DML, admin commands, injection patterns (<code>pg_sleep</code>, <code>dblink</code>), BigQuery ops (<code>EXPORT DATA</code>), and Databricks ops (<code>COPY INTO</code>, <code>OPTIMIZE</code>, <code>VACUUM</code>).</p>
+      <p>Static regex patterns block DDL, DML, admin commands, multi-statement payloads, and dangerous functions such as <code>pg_sleep</code>, <code>xp_cmdshell</code>, <code>OPENROWSET</code>, and bulk operations.</p>
     </div>
     <div class="sec-card">
       <span class="icon">&#x1f511;</span>
@@ -1044,7 +1070,7 @@ pre code { background: none; color: inherit; padding: 0; }
     <div class="sec-card">
       <span class="icon">&#x23f1;</span>
       <h4>Statement Timeout</h4>
-      <p>PostgreSQL: <code>SET LOCAL statement_timeout</code>. BigQuery &amp; Databricks: <code>asyncio.wait_for()</code>. Default 30s, configurable per connection.</p>
+      <p>Each connection carries its own max query timeout. PostgreSQL sets <code>statement_timeout</code>; connector implementations enforce equivalent limits where available.</p>
     </div>
     <div class="sec-card">
       <span class="icon">&#x1f4ca;</span>
@@ -1054,7 +1080,7 @@ pre code { background: none; color: inherit; padding: 0; }
     <div class="sec-card">
       <span class="icon">&#x1f310;</span>
       <h4>CORS Restriction</h4>
-      <p>FastAPI CORS middleware restricts origins. Default: <code>http://localhost:5173</code> and <code>http://localhost:5174</code> only.</p>
+      <p>FastAPI CORS middleware restricts origins. Development defaults include the React admin UI, Angular chat UI, and configured local ports.</p>
     </div>
   </div>
 </section>
@@ -1062,46 +1088,46 @@ pre code { background: none; color: inherit; padding: 0; }
 <!-- ===== 11. DEPLOYMENT ===== -->
 <section id="deployment">
   <h2>Deployment</h2>
-  <p>The application runs as 4 core Docker Compose services (+ optional Ollama via <code>--profile ollama-docker</code>) with health-check dependencies. A single <code>docker compose up</code> brings up the full stack.</p>
+  <p>The Docker Compose setup starts the metadata database, FastAPI backend, and React admin UI, with optional Ollama and pgAdmin profiles. The Angular chat UI is developed from <code>angular-test/</code> on port 4200. A single <code>docker compose up</code> brings up the core stack.</p>
 
   <div class="deploy-grid">
     <div class="deploy-svc" style="border-color:#10b981; border-width:2px;">
       <div class="svc-name">app-db</div>
       <div class="svc-image">pgvector/pgvector:pg16</div>
-      <div class="svc-port">:5432</div>
+      <div class="svc-port">:5434</div>
       <div class="svc-desc">App metadata, embeddings, glossary, sessions, query history. pgvector extension enabled.</div>
     </div>
     <div class="deploy-svc" style="border-color:#3b82f6; border-width:2px;">
-      <div class="svc-name">sample-db</div>
-      <div class="svc-image">postgres:16</div>
-      <div class="svc-port">:5433</div>
-      <div class="svc-desc">Sample PRMS database. Auto-seeded with resources, skills, clients, projects, timesheets.</div>
-    </div>
-    <div class="deploy-svc" style="border-color:#64748b; border-width:2px;">
-      <div class="svc-name">ollama</div>
-      <div class="svc-image">ollama/ollama</div>
-      <div class="svc-port">:11434</div>
-      <div class="svc-desc">Local LLM inference. Optional &mdash; enabled via <code>--profile ollama-docker</code>.</div>
-    </div>
-    <div class="deploy-svc" style="border-color:#8b5cf6; border-width:2px;">
       <div class="svc-name">backend</div>
       <div class="svc-image">python:3.12-slim</div>
       <div class="svc-port">:8000</div>
-      <div class="svc-desc">FastAPI + uvicorn with hot reload. Depends on app-db healthy. Pre-embeds intent catalog at startup.</div>
+      <div class="svc-desc">FastAPI + uvicorn. Runs Alembic migrations at container start and depends on app-db health.</div>
     </div>
-    <div class="deploy-svc" style="border-color:#f59e0b; border-width:2px;">
+    <div class="deploy-svc" style="border-color:#64748b; border-width:2px;">
       <div class="svc-name">frontend</div>
       <div class="svc-image">node:20-slim</div>
       <div class="svc-port">:5173</div>
-      <div class="svc-desc">Vite dev server with API proxy to backend.</div>
+      <div class="svc-desc">React admin UI with API URL pointing to the backend.</div>
+    </div>
+    <div class="deploy-svc" style="border-color:#8b5cf6; border-width:2px;">
+      <div class="svc-name">ollama</div>
+      <div class="svc-image">ollama/ollama</div>
+      <div class="svc-port">:11434</div>
+      <div class="svc-desc">Optional local LLM inference, enabled via <code>--profile ollama-docker</code>.</div>
+    </div>
+    <div class="deploy-svc" style="border-color:#f59e0b; border-width:2px;">
+      <div class="svc-name">pgadmin</div>
+      <div class="svc-image">dpage/pgadmin4</div>
+      <div class="svc-port">:5050</div>
+      <div class="svc-desc">Optional database admin UI, enabled via <code>--profile pgadmin</code>.</div>
     </div>
   </div>
 
   <h3>Service Dependency Graph</h3>
-<pre><code>frontend (:5173) ──proxy /api──▶ backend (:8000) ──depends_on──▶ app-db (:5432)
+<pre><code>React admin UI (:5173) ──API──▶ backend (:8000) ──depends_on──▶ app-db (:5434 host / 5432 container)
+Angular chat UI (:4200) ──────▶       │
                                        │
-                                       ├──connects to──▶ sample-db (:5433)
-                                       │                 (or any target DB)
+                                       ├──connects to──▶ target PostgreSQL / SQL Server databases
                                        └──optional────▶ ollama (:11434)
                                                          (local LLM, profile: ollama-docker)</code></pre>
 
@@ -1109,21 +1135,23 @@ pre code { background: none; color: inherit; padding: 0; }
 <pre><code><span class="cmt"># 1. Clone and configure</span>
 git clone &lt;repo-url&gt; querywise &amp;&amp; cd querywise
 cp .env.example .env
-<span class="cmt"># Edit .env — add ANTHROPIC_API_KEY and/or OPENAI_API_KEY</span>
+<span class="cmt"># Edit .env — add JWT_SECRET, ENCRYPTION_KEY, and at least one LLM provider key</span>
 
 <span class="cmt"># 2. Start everything</span>
 docker compose up
 
 <span class="cmt"># 3. Open browser</span>
-<span class="cmt"># Frontend:  http://localhost:5173</span>
-<span class="cmt"># API Docs:  http://localhost:8000/docs</span></code></pre>
+<span class="cmt"># React admin UI:  http://localhost:5173</span>
+<span class="cmt"># Angular chat UI: http://localhost:4200 (run from angular-test/)</span>
+<span class="cmt"># API Docs:        http://localhost:8000/docs</span></code></pre>
 
   <h3>Environment Variables</h3>
   <table>
     <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>DATABASE_URL</code></td><td><code>postgresql+asyncpg://querywise:querywise_dev@localhost:5432/querywise</code></td><td>App metadata DB</td></tr>
-      <tr><td><code>ENCRYPTION_KEY</code></td><td>dev key</td><td>Fernet key for connection strings</td></tr>
+      <tr><td><code>DATABASE_URL</code></td><td><code>postgresql+asyncpg://querywise:querywise_dev@localhost:5432/querywise</code></td><td>App metadata DB; Docker overrides it to the app-db service</td></tr>
+      <tr><td><code>ENCRYPTION_KEY</code></td><td>required</td><td>Fernet key for connection strings</td></tr>
+      <tr><td><code>JWT_SECRET</code></td><td>required</td><td>JWT authentication secret</td></tr>
       <tr><td><code>DEFAULT_LLM_PROVIDER</code></td><td><code>anthropic</code></td><td>LLM provider (anthropic|openai|ollama|openrouter|groq)</td></tr>
       <tr><td><code>DEFAULT_LLM_MODEL</code></td><td><code>claude-sonnet-4-20250514</code></td><td>Default model name</td></tr>
       <tr><td><code>EMBEDDING_PROVIDER</code></td><td><code></code></td><td>Override embedding provider (defaults to DEFAULT_LLM_PROVIDER, falls back to openai)</td></tr>
@@ -1133,21 +1161,41 @@ docker compose up
       <tr><td><code>OPENROUTER_API_KEY</code></td><td>&mdash;</td><td>Required for OpenRouter</td></tr>
       <tr><td><code>OPENROUTER_MODEL</code></td><td><code>deepseek/deepseek-v3.2</code></td><td>OpenRouter model for Composer (SQL generation)</td></tr>
       <tr><td><code>GROQ_API_KEY</code></td><td>&mdash;</td><td>Required for Groq</td></tr>
-      <tr><td><code>GROQ_MODEL</code></td><td><code>moonshotai/kimi-k2-instruct</code></td><td>Groq model</td></tr>
+      <tr><td><code>GROQ_MODEL</code></td><td><code>meta-llama/llama-3.1-70b-versatile</code></td><td>Groq model</td></tr>
       <tr><td><code>OLLAMA_BASE_URL</code></td><td><code>http://localhost:11434</code></td><td>Ollama server URL</td></tr>
       <tr><td><code>OLLAMA_MODEL</code></td><td><code>llama3.1:8b</code></td><td>Ollama model for completions</td></tr>
       <tr><td><code>OLLAMA_EMBEDDING_MODEL</code></td><td><code>nomic-embed-text</code></td><td>Ollama model for embeddings (768-dim)</td></tr>
       <tr><td><code>OLLAMA_LLM_BASE_URL</code></td><td><code></code></td><td>Separate URL for cloud Ollama LLM (falls back to OLLAMA_BASE_URL)</td></tr>
       <tr><td><code>OLLAMA_API_KEY</code></td><td><code></code></td><td>API key for cloud-hosted Ollama</td></tr>
       <tr><td><code>EMBEDDING_DIMENSION</code></td><td><code>1536</code></td><td>Vector dimension (1536 OpenAI, 768 Ollama)</td></tr>
-      <tr><td><code>TOOL_CONFIDENCE_THRESHOLD</code></td><td><code>0.65</code></td><td>Min cosine similarity to route to domain tool</td></tr>
       <tr><td><code>MAX_CONTEXT_TABLES</code></td><td><code>8</code></td><td>Max tables in LLM context</td></tr>
       <tr><td><code>DEFAULT_QUERY_TIMEOUT_SECONDS</code></td><td><code>30</code></td><td>Max query execution time</td></tr>
       <tr><td><code>DEFAULT_MAX_ROWS</code></td><td><code>1000</code></td><td>Max result rows</td></tr>
-      <tr><td><code>AUTO_SETUP_SAMPLE_DB</code></td><td><code>true</code></td><td>Auto-create sample DB connection + seed metadata</td></tr>
-      <tr><td><code>CORS_ORIGINS</code></td><td><code>["http://localhost:5173","http://localhost:5174"]</code></td><td>Allowed CORS origins</td></tr>
+      <tr><td><code>AUTO_SETUP_SAMPLE_DB</code></td><td><code>false</code></td><td>Optional startup sample environment setup</td></tr>
+      <tr><td><code>USE_FOLLOW_UP_PATH</code></td><td><code>false</code></td><td>Enable compact follow-up refinement path</td></tr>
+      <tr><td><code>CORS_ORIGINS</code></td><td><code>["http://localhost:5173","http://localhost:5174","http://localhost:4200","http://localhost:4000"]</code></td><td>Allowed CORS origins</td></tr>
     </tbody>
   </table>
+
+  <h3>Plain-English Architecture</h3>
+  <div class="card-grid card-grid-2">
+    <div class="card card-accent">
+      <h4>What the System Does</h4>
+      <p>QueryWise is a controlled translator between business language and database language. A person asks a question, the system looks up the relevant business definitions and database structure, writes safe SQL, runs it, and explains the answer in normal language.</p>
+    </div>
+    <div class="card card-accent">
+      <h4>Why the Layers Matter</h4>
+      <p>The UI gives users a place to ask and review. The API validates requests. LangGraph manages the conversation. The semantic layer supplies business context. The connector safely talks to databases. The metadata database remembers what happened for audit and follow-up questions.</p>
+    </div>
+    <div class="card card-accent">
+      <h4>How Follow-Ups Work</h4>
+      <p>The user does not need to repeat everything. The backend stores compact context from prior successful turns, so "show me the SQL", "explain that", or "now only last month" can refer to the previous answer.</p>
+    </div>
+    <div class="card card-accent">
+      <h4>How Risk Is Reduced</h4>
+      <p>The system avoids blindly running generated SQL. It checks for dangerous statements, validates schema references, applies row and timeout limits, enforces user scope, and stores a history trail of SQL, results, status, and retries.</p>
+    </div>
+  </div>
 </section>
 
 </div><!-- /.main -->

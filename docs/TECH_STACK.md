@@ -1,65 +1,73 @@
 # QueryWise Tech Stack
 
-## Runtime
+## Backend
+
 | Layer | Technology |
-|-------|------------|
-| Backend | Python 3.12+ |
-| API Framework | FastAPI |
-| Graph Orchestration | LangGraph |
-| Database ORM | SQLAlchemy (async) |
-| DB Driver | asyncpg (PostgreSQL), aioodbc (SQL Server) |
-| Vector Store | pgvector |
+|---|---|
+| Language | Python 3.12+ |
+| API | FastAPI |
+| Orchestration | LangGraph |
+| ORM | SQLAlchemy async |
+| Metadata DB | PostgreSQL 16 + pgvector |
+| PostgreSQL driver | asyncpg |
+| SQL Server driver | aioodbc |
 
 ## Frontends
-| App | Technology | Port |
-|-----|-----------|------|
-| Main UI | React 19 + TypeScript + Mantine UI | 5173 |
+
+| Surface | Technology | Port |
+|---|---|---|
+| Admin UI | React 19, TypeScript, Vite, Mantine | 5173 |
 | Chat UI | Angular 21 | 4200 |
 
-## LLM + Embeddings (OpenRouter Only)
-| Use | Model | Config |
-|------|-------|--------|
-| SQL Generation | deepseek/deepseek-v3.2 | `DEFAULT_LLM_MODEL` |
-| Intent Classification | openai/gpt-4.1-nano | `RESOLVER_MODEL` |
-| Result Interpretation | meta-llama/llama-3.1-8b-instruct | `INTERPRETER_MODEL` |
-| Embeddings | text-embedding-3-small | `EMBEDDING_MODEL` |
+## LLM and embedding support
 
-## Database Connections
-| Database | Port | Used For |
-|----------|------|---------|
-| App DB (PostgreSQL + pgvector) | 5434 | Metadata, embeddings, query history |
-| Target DB | Variable | User's database to query |
+Supported provider families:
 
-## Key Files
-| File | Purpose |
-|------|--------|
-| `backend/app/llm/graph/graph.py` | LangGraph state machine |
-| `backend/app/llm/graph/nodes/similarity_check.py` | Exact-duplicate shortcut |
-| `backend/app/semantic/schema_linker.py` | Find relevant tables/cols |
-| `backend/app/semantic/glossary_resolver.py` | Business term resolution |
-| `backend/app/connectors/` | DB plugin system (PostgreSQL, SQL Server) |
-| `docker-compose.yml` | Full stack orchestration |
+- Anthropic
+- OpenAI
+- Ollama
+- OpenRouter
+- Groq
 
-## Quick Config (OpenRouter Only)
+Important model settings:
+
+- `DEFAULT_LLM_MODEL`
+- `OPENROUTER_MODEL`
+- `RESOLVER_MODEL`
+- `INTERPRETER_MODEL`
+- `EMBEDDING_MODEL`
+
+## Data and retrieval
+
+| Concern | Technology |
+|---|---|
+| Semantic table search | pgvector + keyword scoring |
+| Knowledge retrieval | chunked text + embeddings |
+| Query history | PostgreSQL JSONB-backed audit records |
+| Streaming responses | Server-sent events |
+
+## Key code locations
+
+| Path | Purpose |
+|---|---|
+| `backend/app/llm/graph/graph.py` | Live LangGraph assembly |
+| `backend/app/services/query_service.py` | Query orchestration entry point |
+| `backend/app/semantic/context_builder.py` | Semantic prompt context assembly |
+| `backend/app/connectors/` | Database connector implementations |
+| `frontend/src/` | React admin UI |
+| `angular-test/src/` | Angular chat UI |
+
+## Default local commands
+
 ```bash
-# Required in .env
-DEFAULT_LLM_PROVIDER=openrouter
-OPENROUTER_API_KEY=sk-or-...
-EMBEDDING_PROVIDER=openrouter
-EMBEDDING_DIMENSION=1536
-```
-
-## Run Commands
-```bash
-# Full stack (Docker)
 docker compose up
 
-# Backend only
-cd backend && uvicorn app.main:app --reload
+cd backend
+uvicorn app.main:app --reload
 
-# Frontend
-cd frontend && npm run dev
+cd frontend
+npm run dev
 
-# Angular Chat
-cd angular-test && npm run start
+cd angular-test
+npm run start
 ```

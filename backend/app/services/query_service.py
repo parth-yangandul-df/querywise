@@ -132,10 +132,17 @@ async def execute_nl_query(
 
     result: QueryResult = final_state["result"]
 
+    result_status = "success"
+    if result and not result.rows:
+        result_status = "empty"
+    elif final_state.get("error"):
+        result_status = "error"
+
     return {
         "id": final_state.get("execution_id"),
         "question": question,
         "turn_type": action,
+        "result_status": result_status,
         "clarification_message": None,
         "clarification_options": [],
         "generated_sql": final_state.get("generated_sql"),

@@ -20,11 +20,31 @@ logger = logging.getLogger(__name__)
 async def interpret_result(state: GraphState) -> dict[str, Any]:
     """Interpret query results. Streams tokens if event_queue is present."""
     result = state.get("result")
-    if not result or not result.rows:
+    if not result:
         return {
             "answer": None,
             "highlights": [],
             "suggested_followups": [],
+        }
+
+    if not result.rows:
+        if state.get("event_queue"):
+            await state.get("event_queue").put(
+                {
+                    "type": "stage",
+                    "stage": "interpreting",
+                    "label": "Preparing response...",
+                    "progress": 90,
+                }
+            )
+        return {
+            "answer": "No matching rows found.",
+            "highlights": [],
+            "suggested_followups": [
+                "Show SQL",
+                "Broader search terms",
+                "Remove last filter",
+            ],
         }
 
     single_value = format_single_value_result(result.rows)
