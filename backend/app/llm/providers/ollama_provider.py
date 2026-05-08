@@ -97,9 +97,12 @@ class OllamaProvider(BaseLLMProvider):
                     "max_tokens": config.max_tokens,
                     "messages_count": len(messages),
                 },
-            ):
+            ) as run:
                 resp = await self._client.post("/chat", json=payload)
                 resp.raise_for_status()
+                data = resp.json()
+                if run is not None:
+                    run.end(outputs={"content": data.get("message", {}).get("content", "")[:500], "model": data.get("model", config.model)})
         except httpx.ConnectError as err:
             raise ConnectionError(
                 f"Cannot connect to Ollama at {settings.ollama_llm_base_url or settings.ollama_base_url}. "
@@ -149,7 +152,7 @@ class OllamaProvider(BaseLLMProvider):
                     "temperature": config.temperature,
                     "max_tokens": config.max_tokens,
                 },
-            ):
+            ) as run:
                 async with self._client.stream("POST", "/chat", json=payload) as resp:
                     resp.raise_for_status()
                     async for line in resp.aiter_lines():
@@ -161,6 +164,8 @@ class OllamaProvider(BaseLLMProvider):
                             yield content
                         if chunk.get("done", False):
                             break
+                    if run is not None:
+                        run.end(outputs={"status": "stream_complete"})
         except httpx.ConnectError as err:
             raise ConnectionError(
                 f"Cannot connect to Ollama at {settings.ollama_llm_base_url or settings.ollama_base_url}. "
@@ -184,13 +189,19 @@ class OllamaProvider(BaseLLMProvider):
             model=model,
             operation="embed",
             metadata={"text_length": len(text)},
-        ):
+        ) as run:
             try:
-                return await self._embed_new_api(text, model)
+                result = await self._embed_new_api(text, model)
+                if run is not None:
+                    run.end(outputs={"embedding_dim": len(result), "model": model})
+                return result
             except httpx.HTTPStatusError as err:
                 raise_if_provider_rate_limited(err, "Ollama")
                 if err.response.status_code == 404:
-                    return await self._embed_legacy_api(text, model)
+                    result = await self._embed_legacy_api(text, model)
+                    if run is not None:
+                        run.end(outputs={"embedding_dim": len(result), "model": model})
+                    return result
                 raise
             except httpx.ConnectError as err:
                 raise ConnectionError(

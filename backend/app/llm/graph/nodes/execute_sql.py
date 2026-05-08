@@ -36,7 +36,7 @@ async def execute_sql(state: GraphState) -> dict[str, Any]:
         state["connection_string"],
     )
 
-    logger.info("execute_sql: running sql=%r", sql_to_run[:80])
+    logger.info("execute_sql: running sql=%r", sql_to_run[:200])
 
     try:
         result = await connector.execute_query(
@@ -45,7 +45,7 @@ async def execute_sql(state: GraphState) -> dict[str, Any]:
             max_rows=state.get("max_rows", 1000),
         )
     except Exception as e:
-        logger.warning("execute_sql: query failed error=%s", e)
+        logger.warning("execute_sql: query failed error=%s sql=%r", e, sql_to_run[:200])
         return {
             "sql": sql_to_run,
             "generated_sql": generated_sql,

@@ -42,7 +42,7 @@ class OpenAIProvider(BaseLLMProvider):
                     "max_tokens": config.max_tokens,
                     "messages_count": len(messages),
                 },
-            ):
+            ) as run:
                 response = await self._client.chat.completions.create(
                     model=config.model,
                     messages=oai_messages,
@@ -54,6 +54,8 @@ class OpenAIProvider(BaseLLMProvider):
                         "cache_control": {"type": "ephemeral", "ttl": "1h"}
                     },
                 )
+                if run is not None:
+                    run.end(outputs={"content": response.choices[0].message.content[:500] if response.choices[0].message.content else "", "model": response.model})
         except Exception as err:
             raise_if_provider_rate_limited(err, "OpenAI")
             logger.error("OpenAI API error: %s", err, exc_info=True)
@@ -104,7 +106,7 @@ class OpenAIProvider(BaseLLMProvider):
                     "temperature": config.temperature,
                     "max_tokens": config.max_tokens,
                 },
-            ):
+            ) as run:
                 stream = await self._client.chat.completions.create(
                     model=config.model,
                     messages=oai_messages,
@@ -123,6 +125,8 @@ class OpenAIProvider(BaseLLMProvider):
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
+        if run is not None:
+            run.end(outputs={"status": "stream_complete"})
 
     @llm_retry()
     async def generate_embedding(self, text: str) -> list[float]:
@@ -134,14 +138,16 @@ class OpenAIProvider(BaseLLMProvider):
                 model=settings.embedding_model,
                 operation="embed",
                 metadata={"text_length": len(text)},
-            ):
+            ) as run:
                 response = await self._client.embeddings.create(
                     model=settings.embedding_model,
                     input=text,
                 )
+                if run is not None:
+                    run.end(outputs={"embedding_dim": len(response.data[0].embedding), "model": response.model})
         except Exception as err:
             raise_if_provider_rate_limited(err, "OpenAI")
-            logger.error("OpenAI embedding error: %s", exc_info=True)
+            logger.error("OpenAI embedding error: %s", err, exc_info=True)
             raise
         return response.data[0].embedding
 

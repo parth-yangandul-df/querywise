@@ -2300,47 +2300,6 @@ RELATIONSHIPS: list[dict] = [
         "constraint_name": "FK_Resource_Function",
         "relationship_type": "explicit_fk",
     },
-    {
-        "source_table": "Resource",
-        "source_column": "CountryId",
-        "target_table": "countries",
-        "target_column": "countryID",
-        "constraint_name": "FK_Resource_Country",
-        "relationship_type": "hierarchical",
-    },
-    {
-        "source_table": "Resource",
-        "source_column": "StateId",
-        "target_table": "states",
-        "target_column": "stateID",
-        "constraint_name": "FK_Resource_State",
-        "relationship_type": "hierarchical",
-    },
-    {
-        "source_table": "Resource",
-        "source_column": "CityId",
-        "target_table": "cities",
-        "target_column": "cityID",
-        "constraint_name": "FK_Resource_City",
-        "relationship_type": "hierarchical",
-    },
-    # ── Geography hierarchy ───────────────────────────────────────────────────
-    {
-        "source_table": "states",
-        "source_column": "countryID",
-        "target_table": "countries",
-        "target_column": "countryID",
-        "constraint_name": "FK_State_Country",
-        "relationship_type": "hierarchical",
-    },
-    {
-        "source_table": "cities",
-        "source_column": "stateID",
-        "target_table": "states",
-        "target_column": "stateID",
-        "constraint_name": "FK_City_State",
-        "relationship_type": "hierarchical",
-    },
     # ── Project ───────────────────────────────────────────────────────────────
     {
         "source_table": "Project",
@@ -2376,26 +2335,10 @@ RELATIONSHIPS: list[dict] = [
     },
     {
         "source_table": "Project",
-        "source_column": "ProjectSubTypeId",
-        "target_table": "ProjectSubType",
-        "target_column": "ProjectSubTypeId",
-        "constraint_name": "FK_Project_SubType",
-        "relationship_type": "explicit_fk",
-    },
-    {
-        "source_table": "Project",
         "source_column": "CategoryId",
         "target_table": "CategoryType",
         "target_column": "CategoryTypeId",
         "constraint_name": "FK_Project_Category",
-        "relationship_type": "explicit_fk",
-    },
-    {
-        "source_table": "Project",
-        "source_column": "ReviewCycleId",
-        "target_table": "ReviewCycle",
-        "target_column": "ReviewId",
-        "constraint_name": "FK_Project_Review",
         "relationship_type": "explicit_fk",
     },
     {
@@ -2471,22 +2414,6 @@ RELATIONSHIPS: list[dict] = [
         "target_column": "PaymentCycleId",
         "constraint_name": "FK_Client_PaymentCycle",
         "relationship_type": "explicit_fk",
-    },
-    {
-        "source_table": "Client",
-        "source_column": "CountryId",
-        "target_table": "countries",
-        "target_column": "countryID",
-        "constraint_name": "FK_Client_Country",
-        "relationship_type": "hierarchical",
-    },
-    {
-        "source_table": "Client",
-        "source_column": "CityId",
-        "target_table": "cities",
-        "target_column": "cityID",
-        "constraint_name": "FK_Client_City",
-        "relationship_type": "hierarchical",
     },
     # ── Client related ────────────────────────────────────────────────────────
     {
@@ -2578,14 +2505,6 @@ RELATIONSHIPS: list[dict] = [
         "target_table": "TS_Activity",
         "target_column": "Id",
         "constraint_name": "FK_EOD_Activity",
-        "relationship_type": "explicit_fk",
-    },
-    {
-        "source_table": "TS_EODDetails",
-        "source_column": "Jira_Identifier",
-        "target_table": "TS_Jira_Master",
-        "target_column": "Jira_Identifier",
-        "constraint_name": "FK_EOD_Jira",
         "relationship_type": "explicit_fk",
     },
     {

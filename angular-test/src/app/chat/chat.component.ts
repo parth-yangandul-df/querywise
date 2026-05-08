@@ -46,10 +46,38 @@ export class ChatComponent implements OnInit {
     public chatService: ChatService
   ) {
     effect(() => {
-      this.messages.set(this.chatService.messages());
+      const msgs = this.chatService.messages();
+      this.messages.set(msgs);
       this.isLoading.set(this.chatService.isLoading());
       this.pipelineStage.set(this.chatService.pipelineStage());
+      this.initializeTableStates(msgs);
     });
+  }
+
+  private initializeTableStates(messages: ChatMessage[]) {
+    const currentStates = this.tableStates();
+    let hasChanges = false;
+    const newStates = { ...currentStates };
+
+    for (const msg of messages) {
+      if (msg.role === 'assistant' && msg.result) {
+        const resultId = msg.result.id;
+        if (!newStates[resultId]) {
+          newStates[resultId] = {
+            searchTerm: '',
+            currentPage: 1,
+            rowsPerPage: 10,
+            sortField: '',
+            sortOrder: null,
+          };
+          hasChanges = true;
+        }
+      }
+    }
+
+    if (hasChanges) {
+      this.tableStates.set(newStates);
+    }
   }
 
   ngOnInit() {

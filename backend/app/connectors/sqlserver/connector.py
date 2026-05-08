@@ -437,11 +437,10 @@ def _inject_top(sql: str, n: int) -> str:
     if "TOP " in upper or "LIMIT " in upper:
         return stripped
 
-    # Find position after SELECT (accounting for SELECT DISTINCT)
     if upper.startswith("SELECT DISTINCT"):
         insert_at = upper.index("DISTINCT") + len("DISTINCT")
     elif upper.startswith("SELECT"):
-        insert_at = stripped.index("SELECT") + len("SELECT")
+        insert_at = upper.index("SELECT") + len("SELECT")
     else:
         # Not a SELECT — wrap in subquery
         return f"SELECT TOP {n} * FROM ({stripped}) AS _q"

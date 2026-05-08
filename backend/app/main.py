@@ -199,9 +199,11 @@ async def lifespan(app: FastAPI):
         logger.info("QueryWise startup: initializing LangSmith tracing")
         try:
             _setup_langsmith_tracing()
-            logger.info("QueryWise startup: LangSmith tracing enabled")
+            logger.info("QueryWise startup: LangSmith tracing enabled for project '%s'", settings.langsmith_project)
         except Exception:
             logger.warning("LangSmith tracing setup failed", exc_info=True)
+    elif settings.langsmith_tracing_enabled:
+        logger.warning("LangSmith tracing enabled but API key not configured")
 
     logger.info("QueryWise startup complete")
     yield

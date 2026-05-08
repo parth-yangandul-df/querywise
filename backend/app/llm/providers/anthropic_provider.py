@@ -63,8 +63,10 @@ class AnthropicProvider(BaseLLMProvider):
                     "max_tokens": config.max_tokens,
                     "messages_count": len(messages),
                 },
-            ):
+            ) as run:
                 response = await self._client.messages.create(**kwargs)
+                if run is not None:
+                    run.end(outputs={"content": response.content[0].text[:500], "model": response.model})
         except Exception as err:
             raise_if_provider_rate_limited(err, "Anthropic")
             logger.error("Anthropic API error: %s", err, exc_info=True)
@@ -111,10 +113,12 @@ class AnthropicProvider(BaseLLMProvider):
                     "temperature": config.temperature,
                     "max_tokens": config.max_tokens,
                 },
-            ):
+            ) as run:
                 async with self._client.messages.stream(**kwargs) as stream:
                     async for text in stream.text_stream:
                         yield text
+                if run is not None:
+                    run.end(outputs={"status": "stream_complete"})
         except Exception as err:
             raise_if_provider_rate_limited(err, "Anthropic")
             logger.error("Anthropic stream error: %s", exc_info=True)

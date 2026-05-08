@@ -53,7 +53,7 @@ class GroqProvider(BaseLLMProvider):
                     "max_tokens": config.max_tokens,
                     "messages_count": len(messages),
                 },
-            ):
+            ) as run:
                 response = await self._client.chat.completions.create(
                     model=config.model,
                     messages=oai_messages,
@@ -62,6 +62,8 @@ class GroqProvider(BaseLLMProvider):
                     top_p=config.top_p,
                     stop=config.stop_sequences or None,
                 )
+                if run is not None:
+                    run.end(outputs={"content": response.choices[0].message.content[:500] if response.choices[0].message.content else "", "model": response.model})
         except Exception as err:
             raise_if_provider_rate_limited(err, "Groq")
             logger.error("Groq API error: %s", err, exc_info=True)
@@ -105,7 +107,7 @@ class GroqProvider(BaseLLMProvider):
                     "max_tokens": config.max_tokens,
                     "tools_count": len(tools),
                 },
-            ):
+            ) as run:
                 response = await self._client.chat.completions.create(
                     model=config.model,
                     messages=oai_messages,
@@ -115,6 +117,8 @@ class GroqProvider(BaseLLMProvider):
                     max_completion_tokens=config.max_tokens,
                     top_p=config.top_p,
                 )
+                if run is not None:
+                    run.end(outputs={"tool_name": response.choices[0].message.tool_calls[0].function.name if response.choices[0].message.tool_calls else None, "model": response.model})
         except Exception as err:
             raise_if_provider_rate_limited(err, "Groq")
             logger.error("Groq tool call error: %s", err, exc_info=True)
@@ -161,7 +165,7 @@ class GroqProvider(BaseLLMProvider):
                     "temperature": config.temperature,
                     "max_tokens": config.max_tokens,
                 },
-            ):
+            ) as run:
                 stream = await self._client.chat.completions.create(
                     model=config.model,
                     messages=oai_messages,
@@ -177,6 +181,8 @@ class GroqProvider(BaseLLMProvider):
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
+        if run is not None:
+            run.end(outputs={"status": "stream_complete"})
 
     async def generate_embedding(self, text: str) -> list[float]:
         raise NotImplementedError("Groq does not support embeddings API")

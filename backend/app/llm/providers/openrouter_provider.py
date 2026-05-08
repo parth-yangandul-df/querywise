@@ -74,9 +74,11 @@ class OpenRouterProvider(OpenAIProvider):
                 "temperature": config.temperature,
                 "max_tokens": config.max_tokens,
             },
-        ):
+        ) as run:
             async for token in super().stream(messages, config):
                 yield token
+            if run is not None:
+                run.end(outputs={"status": "stream_complete"})
 
     async def complete(
         self,
@@ -92,8 +94,11 @@ class OpenRouterProvider(OpenAIProvider):
                 "max_tokens": config.max_tokens,
                 "messages_count": len(messages),
             },
-        ):
-            return await super().complete(messages, config)
+        ) as run:
+            response = await super().complete(messages, config)
+            if run is not None:
+                run.end(outputs={"content": response.content[:500], "model": response.model})
+            return response
 
     def list_models(self) -> list[str]:
         return [
