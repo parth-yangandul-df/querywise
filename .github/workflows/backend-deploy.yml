@@ -35,6 +35,7 @@ jobs:
             source venv/bin/activate
             pip install --upgrade pip
             pip install . --force-reinstall
+            pip install -e ".[llm,dev,sqlserver]"
 
             # 5. Run Database Migrations
             export PYTHONPATH=$PYTHONPATH:$(pwd)
@@ -42,3 +43,20 @@ jobs:
 
             # 6. Restart the Application
             pm2 restart sql-chat || pm2 start "venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000" --name "sql-chat"
+
+      - name: Health Check
+        run: |
+          sleep 6
+          for i in $(seq 1 10); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              http://${{ secrets.SERVER_IP }}:8000/api/v1/health)
+            echo "Attempt $i/10 — HTTP $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ Backend is live!"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "❌ Backend health check failed"
+          exit 1
+#dsbv
