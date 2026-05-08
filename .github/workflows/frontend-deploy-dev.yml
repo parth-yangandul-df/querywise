@@ -25,6 +25,22 @@ jobs:
             frontend/package-lock.json
             angular-test/package-lock.json
 
+       # ──────────────────────────────────────────────
+      # FIX 1: Inject backend URL into BOTH index.html files
+      # before building — both apps read window.__QW_API_URL__
+      # from the <meta name="qw-api-url"> tag
+      # ──────────────────────────────────────────────
+      - name: Inject Backend API URL → React index.html
+        run: |
+          sed -i 's|<meta name="qw-api-url" content="" />|<meta name="qw-api-url" content="${{ secrets.BACKEND_API_URL }}" />|g' \
+            frontend/index.html
+ 
+      - name: Inject Backend API URL → Angular index.html
+        run: |
+          sed -i 's|<meta name="qw-api-url" content="">|<meta name="qw-api-url" content="${{ secrets.BACKEND_API_URL }}">|g' \
+            angular-test/src/index.html
+ 
+
       #################################################
       # Build Frontend 1 (frontend)
       #################################################
