@@ -19,7 +19,7 @@ from app.core.csrf import CSRFMiddleware
 from app.core.exception_handlers import register_exception_handlers
 from app.core.limiter import limiter
 from app.core.logging_config import set_request_id, setup_logging
-from app.db.session import engine
+from app.db.session import async_session_factory, engine
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,22 @@ class MetricsAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class RequestBodySizeMiddleware(BaseHTTPMiddleware):
+    """Enforce maximum request body size to prevent DOS attacks."""
+
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length:
+            max_size_bytes = settings.max_request_body_size_mb * 1024 * 1024
+            if int(content_length) > max_size_bytes:
+                return Response(
+                    content='{"detail":"Request body too large"}',
+                    status_code=413,
+                    media_type="application/json",
+                )
+        return await call_next(request)
+
+
 def _validate_production_settings() -> None:
     """Fail fast if production-secrets are still set to dev defaults."""
     if settings.environment != "development":
@@ -192,23 +208,99 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.warning("Auto-setup sample DB failed", exc_info=True)
 
-    # Initialize LangSmith tracing (if configured)
-    if settings.langsmith_tracing_enabled and settings.langsmith_api_key:
-        from app.llm.graph.graph import _setup_langsmith_tracing
+    # Pre-warm embedding provider — eliminates ~33s cold-start delay on first query
+    # (lazy module import + client instantiation + first OpenRouter API call)
+    from app.services.embedding_service import embed_text
 
-        logger.info("QueryWise startup: initializing LangSmith tracing")
-        try:
-            _setup_langsmith_tracing()
-            logger.info("QueryWise startup: LangSmith tracing enabled for project '%s'", settings.langsmith_project)
-        except Exception:
-            logger.warning("LangSmith tracing setup failed", exc_info=True)
-    elif settings.langsmith_tracing_enabled:
-        logger.warning("LangSmith tracing enabled but API key not configured")
+    logger.info("QueryWise startup: pre-warming embedding provider")
+    try:
+        await embed_text("warmup")
+        logger.info("QueryWise startup: embedding provider warmed OK")
+    except Exception:
+        logger.warning(
+            "Embedding provider pre-warm failed; first query will pay cold-start cost",
+            exc_info=True,
+        )
+
+    # Pre-warm LLM provider singleton — avoids first-call module import overhead
+    from app.llm.provider_registry import get_provider
+
+    logger.info("QueryWise startup: pre-warming LLM provider")
+    try:
+        get_provider(settings.default_llm_provider)
+        logger.info("QueryWise startup: LLM provider warmed OK")
+    except Exception:
+        logger.warning("LLM provider pre-warm failed", exc_info=True)
+
+    # Pre-compile LangGraph — eliminates graph build cost on the first query after deploy
+    from app.llm.graph.graph import get_compiled_graph
+
+    logger.info("QueryWise startup: pre-compiling LangGraph")
+    try:
+        get_compiled_graph()
+        logger.info("QueryWise startup: LangGraph compiled OK")
+    except Exception:
+        logger.warning("LangGraph pre-compile failed", exc_info=True)
+
+    # Pre-warm connection pools — eliminates cold-start latency on first query per connection
+    logger.info("QueryWise startup: pre-warming connection pools")
+    try:
+        await _prewarm_connectors()
+        logger.info("QueryWise startup: connection pools warmed OK")
+    except Exception:
+        logger.warning("Connection pool pre-warm failed — non-critical", exc_info=True)
+
+    # Initialise MLflow tracing (optional — disabled if mlflow_enabled=false
+    # or mlflow package not installed)
+    if settings.mlflow_enabled:
+        from app.core.mlflow_tracing import setup_mlflow
+
+        logger.info("QueryWise startup: initialising MLflow tracing")
+        setup_mlflow(
+            tracking_uri=settings.mlflow_tracking_uri,
+            experiment_name=settings.mlflow_experiment,
+        )
 
     logger.info("QueryWise startup complete")
     yield
     # Shutdown
+    from app.core.redis import close_redis
+
+    await close_redis()
     await engine.dispose()
+
+
+async def _prewarm_connectors() -> None:
+    """Pre-warm database connector pools for all configured connections."""
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.connectors.connector_registry import get_or_create_connector
+    from app.db.models.connection import DatabaseConnection
+    from app.services.connection_service import get_decrypted_connection_string
+
+    async with async_session_factory() as db:
+        result = await db.execute(select(DatabaseConnection))
+        connections = result.scalars().all()
+
+    if not connections:
+        logger.info("No connections to pre-warm")
+        return
+
+    semaphore = asyncio.Semaphore(5)  # Limit concurrent pre-warm to 5
+
+    async def _warm_one(conn: DatabaseConnection) -> None:
+        async with semaphore:
+            try:
+                connection_string = get_decrypted_connection_string(conn)
+                await get_or_create_connector(str(conn.id), conn.connector_type, connection_string)
+                logger.debug("Pre-warmed connector for connection %s", conn.id)
+            except Exception:
+                logger.warning("Failed to pre-warm connector for %s", conn.id, exc_info=True)
+
+    await asyncio.gather(*[_warm_one(c) for c in connections])
+    logger.info("Pre-warmed %d connection pool(s)", len(connections))
 
 
 def create_app() -> FastAPI:
@@ -223,7 +315,9 @@ def create_app() -> FastAPI:
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     # Middleware is processed in reverse registration order on inbound requests.
-    # Order (inbound): CORS → MetricsAuth → CSRF → Timeout → SecurityHeaders → RequestID → app
+    # Order (inbound): CORS → MetricsAuth → CSRF → Timeout → SecurityHeaders →
+    # RequestID → BodySize → app
+    app.add_middleware(RequestBodySizeMiddleware)
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestTimeoutMiddleware)

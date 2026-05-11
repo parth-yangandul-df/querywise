@@ -31,6 +31,7 @@ export class ChatComponent implements OnInit {
   recentQuestions = signal<string[]>([]);
   sqlExpanded = signal<Record<string, boolean>>({});
   copiedSql = signal<string | null>(null);
+  isDark = signal(false);
 
   tableStates = signal<Record<string, TableState>>({});
 
@@ -45,6 +46,10 @@ export class ChatComponent implements OnInit {
     private router: Router,
     public chatService: ChatService
   ) {
+    const stored = localStorage.getItem('qw_theme');
+    const dark = stored === 'dark';
+    this.isDark.set(dark);
+    document.documentElement.classList.toggle('dark', dark);
     effect(() => {
       const msgs = this.chatService.messages();
       this.messages.set(msgs);
@@ -52,6 +57,13 @@ export class ChatComponent implements OnInit {
       this.pipelineStage.set(this.chatService.pipelineStage());
       this.initializeTableStates(msgs);
     });
+  }
+
+  toggleTheme() {
+    this.isDark.update(v => !v);
+    const dark = this.isDark();
+    localStorage.setItem('qw_theme', dark ? 'dark' : 'light');
+    document.documentElement.classList.toggle('dark', dark);
   }
 
   private initializeTableStates(messages: ChatMessage[]) {
@@ -286,6 +298,19 @@ export class ChatComponent implements OnInit {
   selectRecentQuestion(q: string) {
     this.input = q;
     this.inputField?.nativeElement.focus();
+  }
+
+  selectOption(opt: string) {
+    this.input = opt;
+    this.sendMessage();
+  }
+
+  cancelQuery() {
+    this.chatService.cancelQuery();
+  }
+
+  goHome() {
+    this.router.navigate(['/']);
   }
 
   async resetChat() {

@@ -16,7 +16,6 @@ from app.llm.base_provider import (
     LLMResponse,
 )
 from app.llm.retry import llm_retry
-from app.llm.tracing import trace_llm_call
 
 
 class OllamaProvider(BaseLLMProvider):
@@ -88,24 +87,12 @@ class OllamaProvider(BaseLLMProvider):
 
         start = time.monotonic()
         try:
-            with trace_llm_call(
-                provider="ollama",
-                model=config.model,
-                operation="complete",
-                metadata={
-                    "temperature": config.temperature,
-                    "max_tokens": config.max_tokens,
-                    "messages_count": len(messages),
-                },
-            ) as run:
-                resp = await self._client.post("/chat", json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                if run is not None:
-                    run.end(outputs={"content": data.get("message", {}).get("content", "")[:500], "model": data.get("model", config.model)})
+            resp = await self._client.post("/chat", json=payload)
+            resp.raise_for_status()
         except httpx.ConnectError as err:
+            ollama_url = settings.ollama_llm_base_url or settings.ollama_base_url
             raise ConnectionError(
-                f"Cannot connect to Ollama at {settings.ollama_llm_base_url or settings.ollama_base_url}. "
+                f"Cannot connect to Ollama at {ollama_url}. "
                 "Is Ollama running? Start it with: ollama serve"
             ) from err
         except httpx.HTTPStatusError as err:
@@ -144,31 +131,21 @@ class OllamaProvider(BaseLLMProvider):
         }
 
         try:
-            with trace_llm_call(
-                provider="ollama",
-                model=config.model,
-                operation="stream",
-                metadata={
-                    "temperature": config.temperature,
-                    "max_tokens": config.max_tokens,
-                },
-            ) as run:
-                async with self._client.stream("POST", "/chat", json=payload) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if not line:
-                            continue
-                        chunk = json.loads(line)
-                        content = chunk.get("message", {}).get("content", "")
-                        if content:
-                            yield content
-                        if chunk.get("done", False):
-                            break
-                    if run is not None:
-                        run.end(outputs={"status": "stream_complete"})
+            async with self._client.stream("POST", "/chat", json=payload) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    chunk = json.loads(line)
+                    content = chunk.get("message", {}).get("content", "")
+                    if content:
+                        yield content
+                    if chunk.get("done", False):
+                        break
         except httpx.ConnectError as err:
+            ollama_url = settings.ollama_llm_base_url or settings.ollama_base_url
             raise ConnectionError(
-                f"Cannot connect to Ollama at {settings.ollama_llm_base_url or settings.ollama_base_url}. "
+                f"Cannot connect to Ollama at {ollama_url}. "
                 "Is Ollama running? Start it with: ollama serve"
             ) from err
         except httpx.HTTPStatusError as err:
@@ -184,30 +161,18 @@ class OllamaProvider(BaseLLMProvider):
         """
         model = settings.ollama_embedding_model
 
-        with trace_llm_call(
-            provider="ollama",
-            model=model,
-            operation="embed",
-            metadata={"text_length": len(text)},
-        ) as run:
-            try:
-                result = await self._embed_new_api(text, model)
-                if run is not None:
-                    run.end(outputs={"embedding_dim": len(result), "model": model})
-                return result
-            except httpx.HTTPStatusError as err:
-                raise_if_provider_rate_limited(err, "Ollama")
-                if err.response.status_code == 404:
-                    result = await self._embed_legacy_api(text, model)
-                    if run is not None:
-                        run.end(outputs={"embedding_dim": len(result), "model": model})
-                    return result
-                raise
-            except httpx.ConnectError as err:
-                raise ConnectionError(
-                    f"Cannot connect to Ollama at {settings.ollama_base_url}. "
-                    "Is Ollama running? Start it with: ollama serve"
-                ) from err
+        try:
+            return await self._embed_new_api(text, model)
+        except httpx.HTTPStatusError as err:
+            raise_if_provider_rate_limited(err, "Ollama")
+            if err.response.status_code == 404:
+                return await self._embed_legacy_api(text, model)
+            raise
+        except httpx.ConnectError as err:
+            raise ConnectionError(
+                f"Cannot connect to Ollama at {settings.ollama_base_url}. "
+                "Is Ollama running? Start it with: ollama serve"
+            ) from err
 
     async def _embed_new_api(self, text: str, model: str) -> list[float]:
         """Ollama 0.4+ /api/embed endpoint."""

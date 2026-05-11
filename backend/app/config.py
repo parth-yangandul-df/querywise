@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     default_query_timeout_seconds: int = 30
     default_max_rows: int = 1000
     max_retry_attempts: int = 3
+    pipeline_timeout_seconds: int = 45  # Overall LangGraph pipeline timeout
 
     # LLM defaults
     default_llm_provider: str = "anthropic"
@@ -70,6 +71,9 @@ class Settings(BaseSettings):
     # Interpreter model (used for result-to-natural-language conversion across all providers)
     interpreter_model: str = "meta-llama/llama-3.1-8b-instruct"
 
+    # Resolver model (used for intent classification, question rewrite, error correction)
+    resolver_model: str = "openai/gpt-4.1-nano"
+
     # Embedding provider override (leave empty to auto-derive from default_llm_provider)
     # Set to "ollama" to use Ollama for embeddings while using a different provider for LLM.
     # Valid values: "", "openai", "ollama", "anthropic"
@@ -81,10 +85,15 @@ class Settings(BaseSettings):
     # Rate limiting
     max_queries_per_minute: int = 30
 
+    # Request body size limits
+    max_request_body_size_mb: int = 10
+
     # Context builder
     max_context_tables: int = 8
     max_sample_queries: int = 3
     embedding_dimension: int = 1536
+    similarity_shortcut_threshold: float = 0.85
+    resolve_turn_confidence_threshold: float = 0.75
 
     # Logging
     log_level: str = "INFO"
@@ -92,10 +101,15 @@ class Settings(BaseSettings):
     log_rotation: str = "10 MB"
     log_retention: str = "10 days"
 
-    # LangSmith observability
-    langsmith_api_key: str = ""
-    langsmith_project: str = "querywise"
-    langsmith_tracing_enabled: bool = False
+    # Redis
+    redis_url: str = "redis://localhost:6379/0"
+    cache_ttl_seconds: int = 3600
+    request_coalesce_timeout_seconds: int = 10
+
+    # MLflow observability
+    mlflow_enabled: bool = False
+    mlflow_tracking_uri: str = "http://localhost:5003"
+    mlflow_experiment: str = "querywise"
 
     # Feature flags
     use_follow_up_path: bool = False

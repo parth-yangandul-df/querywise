@@ -28,6 +28,8 @@ PORT_BACKEND=8000
 PORT_FRONTEND=5173
 PORT_ANGULAR=4200
 PORT_OLLAMA=11434
+PORT_REDIS=6379
+PORT_MLFLOW=5003
 
 # Paths
 PIDS_DIR="$SCRIPT_DIR/dev.pids"
@@ -54,12 +56,15 @@ is_windows() {
 # Port Utilities
 # =============================================================================
 
-# Reliable LISTENING check — anchors on column boundaries for Windows netstat
+# Reliable LISTENING check — handles both IPv4 and IPv6
 is_port_in_use() {
     local port=$1
     if is_windows; then
+        # Match: IPv4 (0.0.0.0:port, 127.0.0.1:port) AND IPv6 ([::1]:port, [::]:port)
+        # Strip brackets from IPv6 addresses for clean matching
         netstat -ano 2>/dev/null \
-            | grep -E "^\s*TCP\s+[0-9.:]+:${port}\s+.*LISTENING" \
+            | sed 's/\[//g;s/\]//g' \
+            | grep -E "TCP\s+([[0-9.:]+|[0-9a-fA-F:]+):${port}\s+.*LISTENING" \
             >/dev/null 2>&1
     else
         if command -v ss >/dev/null 2>&1; then
@@ -70,13 +75,15 @@ is_port_in_use() {
     fi
 }
 
-# Returns the PIDs (one per line) of processes holding a port LISTENING
+# Returns the PIDs (one per line) of processes holding a port LISTENING (IPv4 + IPv6)
 get_pids_on_port() {
     local port=$1
     if is_windows; then
+        # Strip brackets from IPv6 addresses for clean extraction
         netstat -ano 2>/dev/null \
-            | grep -E "^\s*TCP\s+[0-9.:]+:${port}\s+.*LISTENING" \
-            | awk '{print $5}' \
+            | sed 's/\[//g;s/\]//g' \
+            | grep -E "TCP\s+([[0-9.:]+|[0-9a-fA-F:]+):${port}\s+.*LISTENING" \
+            | awk '{print $NF}' \
             | sort -u
     else
         if command -v lsof >/dev/null 2>&1; then
@@ -231,6 +238,86 @@ stop_postgresql() {
 }
 
 # =============================================================================
+# Redis
+# =============================================================================
+
+start_redis() {
+    log_step "Starting Redis on port $PORT_REDIS..."
+
+    if is_port_in_use $PORT_REDIS; then
+        log_warn "Redis already running on port $PORT_REDIS"
+        return 0
+    fi
+
+    if ! command -v docker >/dev/null 2>&1; then
+        log_error "Docker not found. Please install Docker."
+        return 1
+    fi
+
+    if _docker_compose up -d redis 2>/dev/null; then
+        : # success
+    else
+        # Try to start existing container first, then create new if not exists
+        docker start querywise-redis 2>/dev/null || \
+            docker run -d \
+                --name querywise-redis \
+                -p "$PORT_REDIS:6379" \
+                redis:7-alpine
+    fi
+
+    if wait_for_port $PORT_REDIS 10; then
+        log_info "Redis started"
+    else
+        log_error "Redis failed to start — check Docker"
+        return 1
+    fi
+}
+
+stop_redis() {
+    log_step "Stopping Redis..."
+    _docker_compose stop redis 2>/dev/null || docker stop querywise-redis 2>/dev/null || true
+    log_info "Redis stopped"
+}
+
+# =============================================================================
+# MLflow
+# =============================================================================
+
+start_mlflow() {
+    log_step "Starting MLflow on port $PORT_MLFLOW..."
+
+    if is_port_in_use $PORT_MLFLOW; then
+        log_warn "MLflow already running on port $PORT_MLFLOW"
+        return 0
+    fi
+
+    if ! command -v docker >/dev/null 2>&1; then
+        log_error "Docker not found. Please install Docker."
+        return 1
+    fi
+
+    if _docker_compose up -d mlflow 2>/dev/null; then
+        : # success
+    else
+        log_error "Failed to start MLflow — check docker-compose.yml"
+        return 1
+    fi
+
+    if wait_for_port $PORT_MLFLOW 15; then
+        log_info "MLflow started"
+    else
+        log_error "MLflow failed to start — check docker compose logs"
+        return 1
+    fi
+}
+
+stop_mlflow() {
+    log_step "Stopping MLflow..."
+    _docker_compose stop mlflow 2>/dev/null || true
+    log_info "MLflow stopped"
+}
+
+# =============================================================================
 # Ollama — status check only; it is a system-managed service
 # =============================================================================
 
@@ -253,30 +340,26 @@ start_backend() {
     local pid_file="$PIDS_DIR/backend.pid"
 
     # Ensure venv exists
-    if [[ ! -d "$SCRIPT_DIR/backend/venv" ]]; then
+    if [[ ! -d "$SCRIPT_DIR/backend/.venv" ]]; then
         log_info "Creating Python virtual environment..."
-        python -m venv "$SCRIPT_DIR/backend/venv"
+        python -m venv "$SCRIPT_DIR/backend/.venv"
     fi
 
     # Ensure deps are installed
     if is_windows; then
-        local python_bin="$SCRIPT_DIR/backend/venv/Scripts/python"
-        local activate="source '$SCRIPT_DIR/backend/venv/Scripts/activate'"
+        local python_bin="$SCRIPT_DIR/backend/.venv/Scripts/python"
+        local activate="source '$SCRIPT_DIR/backend/.venv/Scripts/activate'"
     else
-        local python_bin="$SCRIPT_DIR/backend/venv/bin/python"
-        local activate="source '$SCRIPT_DIR/backend/venv/bin/activate'"
+        local python_bin="$SCRIPT_DIR/backend/.venv/bin/python"
+        local activate="source '$SCRIPT_DIR/backend/.venv/bin/activate'"
     fi
 
     if ! "$python_bin" -c "import uvicorn" 2>/dev/null; then
         log_info "Installing backend dependencies..."
         if is_windows; then
-            "$SCRIPT_DIR/backend/venv/Scripts/pip" install -e "$SCRIPT_DIR/backend[llm,dev,sqlserver]" 2>/dev/null \
-                || "$SCRIPT_DIR/backend/venv/Scripts/pip" install uvicorn fastapi 2>/dev/null \
-                || true
+            "$SCRIPT_DIR/backend/.venv/Scripts/pip" install -e "$SCRIPT_DIR/backend[llm,dev,sqlserver]" 2>&1 | tee -a "$LOG_FILE" || true
         else
-            "$SCRIPT_DIR/backend/venv/bin/pip" install -e "$SCRIPT_DIR/backend[llm,dev,sqlserver]" 2>/dev/null \
-                || "$SCRIPT_DIR/backend/venv/bin/pip" install uvicorn fastapi 2>/dev/null \
-                || true
+            "$SCRIPT_DIR/backend/.venv/bin/pip" install -e "$SCRIPT_DIR/backend[llm,dev,sqlserver]" 2>&1 | tee -a "$LOG_FILE" || true
         fi
     fi
 
@@ -426,16 +509,18 @@ start_angular() {
         npm install --prefix "$SCRIPT_DIR/angular-test" 2>/dev/null || true
     fi
 
-    bash -c "
-        cd '$SCRIPT_DIR/angular-test'
-        echo \$\$ > '$pid_file'
-        exec npx ng serve --port $PORT_ANGULAR
-    " >/dev/null 2>&1 &
-
-    if wait_for_port $PORT_ANGULAR 30; then
-        log_info "Angular Test App started (PID: $(cat "$pid_file" 2>/dev/null || echo unknown))"
+    # Run fully detached (no console window) — survives terminal close
+    if is_windows; then
+        start //b //d "$SCRIPT_DIR/angular-test" npx ng serve --port $PORT_ANGULAR
     else
-        log_warn "Angular Test App may not have started — check manually"
+        nohup npx ng serve --port $PORT_ANGULAR > /dev/null 2>&1 &
+    fi
+
+    # Wait for port to be available — give it 45s (Angular is slow to start)
+    if wait_for_port $PORT_ANGULAR 45; then
+        log_info "Angular Test App started on port $PORT_ANGULAR"
+    else
+        log_warn "Angular Test App may not have started — check manually with npm run start --prefix angular-test"
     fi
 }
 
@@ -457,12 +542,10 @@ cmd_start() {
     start_postgresql || true
     echo ""
 
-    # Ollama: status check only — started externally
-    if check_ollama; then
-        log_info "Ollama running on port $PORT_OLLAMA"
-    else
-        log_warn "Ollama not running on port $PORT_OLLAMA — start it manually if needed"
-    fi
+start_redis || true
+    echo ""
+
+    start_mlflow || true
     echo ""
 
     start_backend
@@ -491,6 +574,10 @@ cmd_stop() {
     echo ""
     stop_postgresql
     echo ""
+    stop_redis
+    echo ""
+    stop_mlflow
+    echo ""
 
     log_info "All services stopped"
 }
@@ -516,6 +603,11 @@ cmd_restart() {
             echo ""
             start_angular
             ;;
+        redis)
+            stop_redis
+            echo ""
+            start_redis
+            ;;
         all)
             cmd_stop
             echo ""
@@ -523,7 +615,7 @@ cmd_restart() {
             ;;
         *)
             log_error "Unknown service: $service"
-            log_info "Valid services: backend, frontend, angular"
+            log_info "Valid services: backend, frontend, angular, redis"
             return 1
             ;;
     esac
@@ -535,6 +627,8 @@ cmd_status() {
 
     local -A service_ports=(
         ["PostgreSQL"]=$PORT_DB
+        ["Redis"]=$PORT_REDIS
+        ["MLflow"]=$PORT_MLFLOW
         ["Ollama"]=$PORT_OLLAMA
         ["Backend"]=$PORT_BACKEND
         ["Frontend"]=$PORT_FRONTEND
@@ -542,7 +636,7 @@ cmd_status() {
     )
 
     # Print in a stable order
-    local ordered_services=("PostgreSQL" "Ollama" "Backend" "Frontend" "Angular")
+    local ordered_services=("PostgreSQL" "Redis" "MLflow" "Ollama" "Backend" "Frontend" "Angular")
     for name in "${ordered_services[@]}"; do
         local port=${service_ports[$name]}
         if is_port_in_use "$port"; then
@@ -614,6 +708,10 @@ cmd_clean() {
         done
     done
 
+    # Stop MLflow Docker container
+    log_step "Stopping MLflow..."
+    _docker_compose stop mlflow 2>/dev/null || true
+
     # Kill any saved PIDs that may not have had an active port
     if [[ -d "$PIDS_DIR" ]]; then
         for pid_file in "$PIDS_DIR"/*.pid; do
@@ -632,9 +730,10 @@ cmd_clean() {
         rm -rf "$PIDS_DIR"
     fi
 
-    # Stop Docker container
+    # Stop Docker containers
     log_step "Stopping Docker containers..."
     _docker_compose stop app-db 2>/dev/null || docker stop querywise-postgres 2>/dev/null || true
+    _docker_compose stop redis 2>/dev/null || docker stop querywise-redis 2>/dev/null || true
 
     echo ""
     log_info "Clean complete!"
@@ -676,10 +775,12 @@ show_usage() {
     echo "  clean              Kill all dev processes and clean up"
     echo ""
     echo "Services (for restart):"
-    echo "  backend  frontend  angular"
+    echo "  backend  frontend  angular  redis  mlflow"
     echo ""
     echo "Ports:"
     printf "  %-22s port %s\n" "PostgreSQL (Docker)"  "$PORT_DB"
+    printf "  %-22s port %s\n" "Redis (Docker)"       "$PORT_REDIS"
+    printf "  %-22s port %s\n" "MLflow (Docker)"      "$PORT_MLFLOW"
     printf "  %-22s port %s\n" "Ollama (system)"      "$PORT_OLLAMA"
     printf "  %-22s port %s\n" "Backend (uvicorn)"    "$PORT_BACKEND"
     printf "  %-22s port %s\n" "Frontend (Vite)"      "$PORT_FRONTEND"

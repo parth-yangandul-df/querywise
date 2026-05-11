@@ -12,7 +12,6 @@ from app.llm.base_provider import (
     LLMResponse,
 )
 from app.llm.retry import llm_retry
-from app.llm.tracing import trace_llm_call
 
 logger = __import__("logging").getLogger(__name__)
 
@@ -44,26 +43,14 @@ class GroqProvider(BaseLLMProvider):
 
         start = time.monotonic()
         try:
-            with trace_llm_call(
-                provider="groq",
+            response = await self._client.chat.completions.create(
                 model=config.model,
-                operation="complete",
-                metadata={
-                    "temperature": config.temperature,
-                    "max_tokens": config.max_tokens,
-                    "messages_count": len(messages),
-                },
-            ) as run:
-                response = await self._client.chat.completions.create(
-                    model=config.model,
-                    messages=oai_messages,
-                    temperature=config.temperature,
-                    max_completion_tokens=config.max_tokens,
-                    top_p=config.top_p,
-                    stop=config.stop_sequences or None,
-                )
-                if run is not None:
-                    run.end(outputs={"content": response.choices[0].message.content[:500] if response.choices[0].message.content else "", "model": response.model})
+                messages=oai_messages,
+                temperature=config.temperature,
+                max_completion_tokens=config.max_tokens,
+                top_p=config.top_p,
+                stop=config.stop_sequences or None,
+            )
         except Exception as err:
             raise_if_provider_rate_limited(err, "Groq")
             logger.error("Groq API error: %s", err, exc_info=True)
@@ -98,27 +85,15 @@ class GroqProvider(BaseLLMProvider):
 
         start = time.monotonic()
         try:
-            with trace_llm_call(
-                provider="groq",
+            response = await self._client.chat.completions.create(
                 model=config.model,
-                operation="complete_with_tools",
-                metadata={
-                    "temperature": config.temperature,
-                    "max_tokens": config.max_tokens,
-                    "tools_count": len(tools),
-                },
-            ) as run:
-                response = await self._client.chat.completions.create(
-                    model=config.model,
-                    messages=oai_messages,
-                    tools=tools,
-                    tool_choice="required",
-                    temperature=config.temperature,
-                    max_completion_tokens=config.max_tokens,
-                    top_p=config.top_p,
-                )
-                if run is not None:
-                    run.end(outputs={"tool_name": response.choices[0].message.tool_calls[0].function.name if response.choices[0].message.tool_calls else None, "model": response.model})
+                messages=oai_messages,
+                tools=tools,
+                tool_choice="required",
+                temperature=config.temperature,
+                max_completion_tokens=config.max_tokens,
+                top_p=config.top_p,
+            )
         except Exception as err:
             raise_if_provider_rate_limited(err, "Groq")
             logger.error("Groq tool call error: %s", err, exc_info=True)
@@ -157,22 +132,13 @@ class GroqProvider(BaseLLMProvider):
         oai_messages = [{"role": m.role, "content": m.content} for m in messages]
 
         try:
-            with trace_llm_call(
-                provider="groq",
+            stream = await self._client.chat.completions.create(
                 model=config.model,
-                operation="stream",
-                metadata={
-                    "temperature": config.temperature,
-                    "max_tokens": config.max_tokens,
-                },
-            ) as run:
-                stream = await self._client.chat.completions.create(
-                    model=config.model,
-                    messages=oai_messages,
-                    temperature=config.temperature,
-                    max_completion_tokens=config.max_tokens,
-                    stream=True,
-                )
+                messages=oai_messages,
+                temperature=config.temperature,
+                max_completion_tokens=config.max_tokens,
+                stream=True,
+            )
         except Exception as err:
             raise_if_provider_rate_limited(err, "Groq")
             logger.error("Groq stream error: %s", exc_info=True)
@@ -181,8 +147,6 @@ class GroqProvider(BaseLLMProvider):
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
-        if run is not None:
-            run.end(outputs={"status": "stream_complete"})
 
     async def generate_embedding(self, text: str) -> list[float]:
         raise NotImplementedError("Groq does not support embeddings API")

@@ -24,6 +24,7 @@ async def create_session(
 ):
     session = ChatSession(
         connection_id=body.connection_id,
+        user_id=current_user.id,
         title=body.title or "New Chat",
     )
     db.add(session)
@@ -59,6 +60,7 @@ async def list_sessions(
     stmt = (
         select(ChatSession, func.coalesce(count_subq.c.message_count, 0).label("message_count"))
         .outerjoin(count_subq, ChatSession.id == count_subq.c.session_id)
+        .where(ChatSession.user_id == current_user.id)
         .order_by(ChatSession.updated_at.desc())
     )
     if connection_id:
@@ -87,7 +89,7 @@ async def get_session(
     current_user: User = Depends(get_current_user),
 ):
     session = await db.get(ChatSession, session_id)
-    if not session:
+    if not session or session.user_id != current_user.id:
         raise NotFoundError("ChatSession", str(session_id))
 
     count_result = await db.execute(
@@ -112,7 +114,7 @@ async def list_session_messages(
     current_user: User = Depends(get_current_user),
 ):
     session = await db.get(ChatSession, session_id)
-    if not session:
+    if not session or session.user_id != current_user.id:
         raise NotFoundError("ChatSession", str(session_id))
 
     stmt = (
@@ -132,7 +134,7 @@ async def update_session_title(
     current_user: User = Depends(get_current_user),
 ):
     session = await db.get(ChatSession, session_id)
-    if not session:
+    if not session or session.user_id != current_user.id:
         raise NotFoundError("ChatSession", str(session_id))
     title = str(body.get("title", "")).strip()
     if title:
@@ -149,7 +151,7 @@ async def delete_session(
     current_user: User = Depends(get_current_user),
 ):
     session = await db.get(ChatSession, session_id)
-    if not session:
+    if not session or session.user_id != current_user.id:
         raise NotFoundError("ChatSession", str(session_id))
     await db.delete(session)
     await db.flush()

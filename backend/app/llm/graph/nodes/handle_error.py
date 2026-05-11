@@ -14,7 +14,7 @@ from typing import Any
 
 from app.llm.agents.error_handler import ErrorHandlerAgent
 from app.llm.graph.state import GraphState
-from app.llm.router import route
+from app.llm.router import route_for_role
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +27,47 @@ async def handle_error(state: GraphState) -> dict[str, Any]:
     generated_sql = state.get("generated_sql") or state.get("sql") or ""
     validation_issues = state.get("validation_issues") or []
     execution_error = state.get("error")
-    prompt_context = state.get("prompt_context") or ""
+    schema_tables: dict = state.get("schema_tables") or {}
+    dialect = state.get("connector_type", "sqlserver")
     retry_count = state.get("retry_count") or 0
     previous_attempts = list(state.get("previous_attempts") or [generated_sql])
 
     resolved_question = state.get("resolved_question") or question
-    provider, llm_config = route(resolved_question)
+    # Use the fast resolver model — error correction is a simple rewrite, not composition
+    provider, llm_config = route_for_role(resolved_question, role="error_handler")
 
     if retry_count >= _MAX_RETRIES:
         return _exhausted(validation_issues, execution_error, retry_count, provider, llm_config)
+
+    # Try to load cached schema from last_query_context if state has none.
+    # The follow-up fast path skips build_context, but history may have
+    # schema_tables cached from the previous turn.
+    if not schema_tables:
+        lqc = state.get("last_query_context") or {}
+        cached_schema = lqc.get("schema_tables")
+        if cached_schema:
+            schema_tables = cached_schema
+            logger.info(
+                "handle_error: loaded cached schema from history (%d tables)",
+                len(cached_schema),
+            )
+
+    # Guard: execution errors (e.g., "Invalid column name") require schema context to fix.
+    # If we still have no schema after checking history, we cannot auto-fix.
+    if execution_error and not schema_tables:
+        logger.warning(
+            "handle_error: execution error with no schema context — cannot auto-fix. "
+            "Escalating to clarification. error=%s",
+            execution_error[:100],
+        )
+        return _exhausted(
+            validation_issues,
+            execution_error,
+            retry_count,
+            provider,
+            llm_config,
+            no_schema_context=True,
+        )
 
     error_handler = ErrorHandlerAgent(provider, llm_config)
 
@@ -44,12 +76,22 @@ async def handle_error(state: GraphState) -> dict[str, Any]:
         question=question,
         failed_sql=generated_sql,
         error_message=error_source,
-        schema_context=prompt_context,
+        schema_tables=schema_tables,
+        dialect=dialect,
         attempt_number=retry_count + 1,
         previous_attempts=previous_attempts,
     )
 
     if not resolution.should_retry or not resolution.corrected_sql:
+        return _exhausted(validation_issues, execution_error, retry_count, provider, llm_config)
+
+    # Dedup fast-fail: if the model returned the same SQL, further retries will also fail.
+    # Short-circuit immediately rather than burning remaining retry budget on identical output.
+    if resolution.corrected_sql.strip() == generated_sql.strip():
+        logger.warning(
+            "handle_error: model returned identical SQL on attempt %d — fast-failing",
+            retry_count + 1,
+        )
         return _exhausted(validation_issues, execution_error, retry_count, provider, llm_config)
 
     new_retry_count = retry_count + 1
@@ -77,21 +119,39 @@ def _exhausted(
     retry_count: int,
     provider: Any,
     llm_config: Any,
+    no_schema_context: bool = False,
 ) -> dict[str, Any]:
-    error_desc = execution_error or "; ".join(validation_issues) or "unknown"
+    # Log the raw technical error server-side only — never expose to users.
+    raw_error = execution_error or "; ".join(validation_issues) or "unknown"
+    logger.error(
+        "handle_error exhausted: retry_count=%d no_schema_context=%s raw_error=%s",
+        retry_count,
+        no_schema_context,
+        raw_error[:200],
+    )
+
+    if no_schema_context:
+        message = (
+            "I couldn't refine your follow-up because I don't have enough schema "
+            "context from the previous query. Please rephrase your question as a "
+            "standalone query, or try a simpler version."
+        )
+    else:
+        message = (
+            "I wasn't able to generate a valid SQL query for your question. "
+            "Could you rephrase it or try a simpler version?"
+        )
+
     return {
         "action": "clarification",
         "clarification_reason": "retry_exhausted",
-        "clarification_message": (
-            f"I wasn't able to generate a valid SQL query for your question. "
-            f"Could you rephrase it? ({error_desc})"
-        ),
+        "clarification_message": message,
         "clarification_options": [
             "Rephrase my question",
             "Try a simpler version",
             "Show available tables",
         ],
-        "error": f"SQL validation failed after {retry_count} retries",
+        "error": f"SQL generation failed after {retry_count} retries",
         "llm_provider": provider.provider_type.value,
         "llm_model": llm_config.model,
     }

@@ -40,17 +40,10 @@ Graph topology:
        │                         └─────────────────────────→ execute_sql
        │                                                     Runs final SQL against the target
        │                                                     database via the registered connector.
+       │                                                     Formats the answer as a markdown
+       │                                                     table directly (no LLM interpret step).
        │                                                          │
-       │                                                   interpret_result
-       │                                                     ResultInterpreterAgent: LLM call to
-       │                                                     produce a human-readable answer,
-       │                                                     highlights, and follow-up suggestions.
-       │                                                          │
-       ├─ action=show_sql ───────→ answer_from_state              │
-       │  User asks "show me the SQL". Returns last_generated_sql │
-       │  from loaded state — no DB execution needed.             │
-       │                             │                            │
-       ├─ action=explain_result ─────┤                            │
+       ├─ action=explain_result ───→ answer_from_state            │
        │  User asks "why is X here?". LLM call grounded in the    │
        │  stored result preview — no DB execution needed.         │
        │                             │                            │
@@ -67,7 +60,6 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
-from app.config import settings
 from app.llm.graph.nodes.answer_from_state import answer_from_state
 from app.llm.graph.nodes.build_context_node import build_context_node
 from app.llm.graph.nodes.compose_sql import compose_sql, route_after_compose
@@ -77,23 +69,14 @@ from app.llm.graph.nodes.handle_follow_up import handle_follow_up, route_after_f
 from app.llm.graph.nodes.history_writer import write_history
 from app.llm.graph.nodes.load_history import load_history
 from app.llm.graph.nodes.resolve_turn import resolve_turn, route_after_resolve
-from app.llm.graph.nodes.result_interpreter import interpret_result
+from app.llm.graph.nodes.show_schema import show_schema
 from app.llm.graph.nodes.similarity_check import route_after_similarity, similarity_check
 from app.llm.graph.nodes.validate_sql import route_after_validate, validate_sql
 from app.llm.graph.state import GraphState
-from app.llm.tracing import configure_langsmith
 
 logger = logging.getLogger(__name__)
 
 _compiled_graph: Any = None
-
-
-def _setup_langsmith_tracing() -> None:
-    """Initialize LangSmith tracing on startup."""
-    if not settings.langsmith_tracing_enabled or not settings.langsmith_api_key:
-        return
-
-    configure_langsmith()
 
 
 def _build_graph(checkpointer: Any | None = None) -> Any:
@@ -113,7 +96,7 @@ def _build_graph(checkpointer: Any | None = None) -> Any:
     graph.add_node("handle_error", handle_error)
     graph.add_node("execute_sql", execute_sql)
     graph.add_node("answer_from_state", answer_from_state)
-    graph.add_node("interpret_result", interpret_result)
+    graph.add_node("show_schema", show_schema)
     graph.add_node("write_history", write_history)
 
     # ── Entry ─────────────────────────────────────────────────────────────
@@ -137,7 +120,8 @@ def _build_graph(checkpointer: Any | None = None) -> Any:
         "handle_follow_up",
         route_after_follow_up,
         {
-            "validate_sql": "validate_sql",  # follow_up_rewrite_sql path
+            "execute_sql": "execute_sql",  # follow_up_rewrite_sql path — skip validation
+            "build_context": "build_context",  # validation failed — escalate to full compose
             "write_history": "write_history",  # reuse_answer or clarification
         },
     )
@@ -183,19 +167,19 @@ def _build_graph(checkpointer: Any | None = None) -> Any:
         },
     )
 
-    # Execute SQL: route to handle_error on failure, else interpret result
+    # Execute SQL: route to handle_error on failure, else write_history directly
     graph.add_conditional_edges(
         "execute_sql",
         route_after_execute,
         {
             "handle_error": "handle_error",  # execution failed — retry
-            "interpret_result": "interpret_result",  # success
+            "write_history": "write_history",  # success — answer already formatted
         },
     )
-    graph.add_edge("interpret_result", "write_history")
 
     # ── Non-query paths ───────────────────────────────────────────────────
     graph.add_edge("answer_from_state", "write_history")
+    graph.add_edge("show_schema", "write_history")
     graph.add_edge("write_history", END)
 
     return graph.compile(checkpointer=checkpointer)

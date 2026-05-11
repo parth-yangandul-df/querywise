@@ -1,13 +1,12 @@
 """Resolves business glossary terms and metrics from a NL question."""
 
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-logger = logging.getLogger(__name__)
 
 from app.db.models.dictionary import DictionaryEntry
 from app.db.models.glossary import GlossaryTerm
@@ -16,6 +15,64 @@ from app.db.models.metric import MetricDefinition
 from app.db.models.sample_query import SampleQuery
 from app.db.models.schema_cache import CachedColumn
 from app.semantic.relevance_scorer import extract_keywords
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# In-memory TTL caches for rarely-changing semantic metadata
+# Keyed by connection_id (UUID); value is (timestamp, data).
+# ---------------------------------------------------------------------------
+_GLOSSARY_TTL = 300.0  # 5 minutes
+_METRICS_TTL = 300.0
+
+_glossary_cache: dict[uuid.UUID, tuple[float, list[GlossaryTerm]]] = {}
+_metrics_cache: dict[uuid.UUID, tuple[float, list[MetricDefinition]]] = {}
+
+
+def invalidate_glossary_cache(connection_id: uuid.UUID) -> None:
+    """Call from API endpoints after glossary create/update/delete."""
+    _glossary_cache.pop(connection_id, None)
+
+
+def invalidate_metrics_cache(connection_id: uuid.UUID) -> None:
+    """Call from API endpoints after metric create/update/delete."""
+    _metrics_cache.pop(connection_id, None)
+
+
+async def _get_all_glossary_terms(
+    db: AsyncSession,
+    connection_id: uuid.UUID,
+) -> list[GlossaryTerm]:
+    """Return all glossary terms for a connection, using the in-memory TTL cache."""
+    now = time.monotonic()
+    entry = _glossary_cache.get(connection_id)
+    if entry and (now - entry[0]) < _GLOSSARY_TTL:
+        return entry[1]
+
+    result = await db.execute(
+        select(GlossaryTerm).where(GlossaryTerm.connection_id == connection_id)
+    )
+    terms = list(result.scalars().all())
+    _glossary_cache[connection_id] = (now, terms)
+    return terms
+
+
+async def _get_all_metrics(
+    db: AsyncSession,
+    connection_id: uuid.UUID,
+) -> list[MetricDefinition]:
+    """Return all metric definitions for a connection, using the in-memory TTL cache."""
+    now = time.monotonic()
+    entry = _metrics_cache.get(connection_id)
+    if entry and (now - entry[0]) < _METRICS_TTL:
+        return entry[1]
+
+    result = await db.execute(
+        select(MetricDefinition).where(MetricDefinition.connection_id == connection_id)
+    )
+    metrics = list(result.scalars().all())
+    _metrics_cache[connection_id] = (now, metrics)
+    return metrics
 
 
 @dataclass
@@ -64,17 +121,15 @@ async def resolve_glossary(
     """Find glossary terms relevant to the question.
 
     Uses keyword matching + optional embedding similarity.
+    Fetches all terms via TTL cache to avoid per-request DB round-trips.
     """
     keywords = extract_keywords(question)
     results: list[ResolvedGlossary] = []
     seen_terms: set[str] = set()
 
-    # Keyword matching against term names
-    all_terms_result = await db.execute(
-        select(GlossaryTerm).where(GlossaryTerm.connection_id == connection_id)
-    )
-    all_terms = all_terms_result.scalars().all()
+    all_terms = await _get_all_glossary_terms(db, connection_id)
 
+    # Keyword matching against term names
     for term in all_terms:
         term_lower = term.term.lower()
         for kw in keywords:
@@ -143,16 +198,17 @@ async def resolve_metrics(
     question: str,
     question_embedding: list[float] | None = None,
 ) -> list[ResolvedMetric]:
-    """Find metric definitions relevant to the question."""
+    """Find metric definitions relevant to the question.
+
+    Fetches all metrics via TTL cache to avoid per-request DB round-trips.
+    """
     results: list[ResolvedMetric] = []
     seen: set[str] = set()
 
     question_lower = question.lower()
+    all_metrics = await _get_all_metrics(db, connection_id)
 
-    all_metrics_result = await db.execute(
-        select(MetricDefinition).where(MetricDefinition.connection_id == connection_id)
-    )
-    for metric in all_metrics_result.scalars().all():
+    for metric in all_metrics:
         if (
             metric.display_name.lower() in question_lower
             or metric.metric_name.lower() in question_lower
@@ -270,12 +326,17 @@ async def resolve_knowledge(
     connection_id: uuid.UUID,
     question: str,
     question_embedding: list[float] | None,
-    limit: int = 5,
+    limit: int = 3,
 ) -> list[ResolvedKnowledge]:
     """Find the most relevant knowledge chunks.
 
-    Uses vector similarity when embeddings are available, falls back to
-    keyword ILIKE search otherwise (or when vector search fails).
+    Uses vector similarity with a cosine-distance threshold when embeddings are
+    available; falls back to keyword ILIKE search otherwise.
+
+    Only chunks with cosine_distance < 0.45 (similarity > 0.55) are returned to
+    avoid injecting irrelevant content into the prompt.  At most 2 chunks per
+    document are included to prevent a single verbose document from dominating
+    the context window.
     """
     if question_embedding is not None:
         try:
@@ -288,6 +349,8 @@ async def resolve_knowledge(
                 .where(
                     KnowledgeDocument.connection_id == connection_id,
                     KnowledgeChunk.chunk_embedding.isnot(None),
+                    # Only include chunks that are actually similar to the question
+                    KnowledgeChunk.chunk_embedding.cosine_distance(question_embedding) < 0.45,
                 )
                 .order_by(KnowledgeChunk.chunk_embedding.cosine_distance(question_embedding))
                 .limit(limit)
@@ -295,14 +358,21 @@ async def resolve_knowledge(
             result = await db.execute(stmt)
             rows = result.all()
             if rows:
-                return [
-                    ResolvedKnowledge(
-                        title=doc.title,
-                        source_url=doc.source_url,
-                        content=chunk.content,
-                    )
-                    for chunk, doc in rows
-                ]
+                # Deduplicate: max 2 chunks per document
+                doc_counts: dict[uuid.UUID, int] = {}
+                deduped: list[ResolvedKnowledge] = []
+                for chunk, doc in rows:
+                    count = doc_counts.get(doc.id, 0)
+                    if count < 2:
+                        deduped.append(
+                            ResolvedKnowledge(
+                                title=doc.title,
+                                source_url=doc.source_url,
+                                content=chunk.content,
+                            )
+                        )
+                        doc_counts[doc.id] = count + 1
+                return deduped
         except Exception:
             logger.warning(
                 "Knowledge vector search failed, using keyword fallback.",

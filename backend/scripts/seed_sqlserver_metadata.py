@@ -1179,293 +1179,64 @@ KNOWLEDGE_DOCS: list[dict] = [
     {
         "title": "PRMS Data Model and Business Semantics Overview",
         "content": """
-This system represents a Project Resource Management System (PRMS) designed to manage clients, projects, resources, and their work tracking (EOD/timesheet entries).
+PRMS CRITICAL BUSINESS RULES
 
-CORE ENTITIES:
+TIMESHEET VALIDITY (CRITICAL — apply to every TS_EODDetails query):
+Always filter: IsApproved = 1 AND IsDeleted = 0 AND IsRejected = 0
+Never count unapproved or deleted entries in any hours/effort metric.
 
-1. CLIENT
-The Client table represents external business clients. Each client is uniquely identified by ClientId.
-Clients are associated with Business Units, Organizations, and Functional domains.
-Clients include billing configurations such as MonthlyBillingRate, WeeklyBillingRate, and HourlyBillingRate.
+ACTIVE ALLOCATIONS:
+For current resource-project allocations always filter:
+  ProjectResource.IsActive = 1 AND ProjectResource.AssignmentDate <= GETDATE()
 
-A client is considered valid for reporting only when IsActive = 1.
+BENCH RESOURCES — resources assigned to the internal bench project:
+  Bench resources are tracked via the project named 'DF-Bench'.
+  Pattern: JOIN ProjectResource pr ON pr.ProjectId = p.ProjectId
+           WHERE p.ProjectName = 'DF-Bench'
+             AND pr.IsActive = 1
+             AND pr.PercentageAllocation > 1
+             AND pr.AssignmentDate <= GETDATE()
+             AND r.IsActive = 1
+             AND r.StatusId = 8
+  Do NOT use ProjectResource.Bench = 1 alone — use the 'DF-Bench' project filter.
 
-There are two interpretations of client status:
-- System Status: Controlled by Client.IsActive (1 = Active, 0 = Inactive)
-- Business Status: Derived from Status table via StatusId (e.g., Active, Inactive, Closed)
+BILLING RATE OVERRIDE (most specific level wins):
+  ProjectResource.Rate > Project.HourlyBillingRate > Client.HourlyBillingRate
+  Always use the most specific rate available when computing billing calculations.
 
-2. PROJECT
-The Project table represents engagements executed for clients.
-Each project is linked to:
-- Client (ClientId)
-- Business Unit (BusinessUnitId)
-- Function (FunctionId)
-
-Projects include planned and actual timelines:
-- StartDate / EndDate (planned)
-- ActualStartDate / ActualEndDate (execution)
-
-Project status is derived from Status table using ProjectStatusId.
-
-3. RESOURCE
-The Resource table represents employees or workforce members.
-Each resource has:
-- EmployeeId (business identifier)
-- ResourceName
-- Designation, Role, and Reporting hierarchy
-
-A resource is considered active when IsActive = 1.
-
-Resources are associated with:
-- Business Units
-- Skills (Primaryskill, Secondaryskill)
-- Functional roles (FunctionId, DesignatedRoleId)
-
-4. PROJECT RESOURCE (ALLOCATION LAYER)
-The ProjectResource table maps resources to projects.
-
-It defines:
-- Allocation percentage (PercentageAllocation)
-- Billing status (Billable / Non-billable)
-- Engagement duration (StartDate, EndDate)
-- Billing rates (Rate, HourlyBillingRate)
-
-Special flags:
-- Bench = 1 → resource not allocated to active work
-- Shadow = 1 → non-primary assignment
-- Billable = 1 → revenue-generating allocation
-
-This table is the foundation for utilization and billing calculations.
-
-5. TIMESHEET / EOD (TS_EODDetails)
-The TS_EODDetails table captures daily work logs.
-
-Each entry includes:
-- Resource (ResourceId, ResourceName)
-- Project and task details
-- Hours worked (Hrs)
-- Completion tracking (Completion, CompletionPercent)
-
-Approval workflow:
-- IsApproved = 1 → approved entry
-- IsRejected = 1 → rejected entry
-- IsDeleted = 1 → logically deleted entry
-
-Only valid work entries should satisfy:
-IsApproved = 1 AND IsDeleted = 0 AND IsRejected = 0
-
-These rules must be consistently applied in all reporting metrics.
-
-6. STATUS SYSTEM
-The Status table is a shared lookup table used across:
-- Client
-- Project
-- Resource
-- Other modules
-
-ReferenceId differentiates status domains:
-- 1 → Client Status
-- 2 → Project Status
-- 3 → Resource Status
-- 4 → Email Queue Status
-
-Important:
-The same StatusName (e.g., "Active") can exist in multiple domains.
-Therefore, status interpretation must always consider ReferenceId.
-
-7. ORGANIZATIONAL STRUCTURE
-
-- BusinessUnit → logical grouping of operations
-- Organization → higher-level grouping
-- TechFunction → functional domain (e.g., engineering, analytics)
-
-Entities like Client, Project, and Resource are linked to these structures.
-
-8. LOCATION DATA
-
-Geographic information is stored using:
-- countries (countryID)
-- cities (cityID)
-
-These are reference tables used for address mapping.
-
-9. CLASSIFICATION TABLES
-
-Several tables act as lookup/reference systems:
-- CategoryTable / CategoryType
-- CompanyType
-- Domain
-- Designation / DesignatedRole
-- TechCategory / TechFunction
-
-These define classification hierarchies used across the system.
-
-10. BILLING MODEL
-
-Billing is defined at multiple levels:
-- Client level (default rates)
-- Project level (override rates)
-- ProjectResource level (final billing rate)
-
-Hierarchy:
-ProjectResource > Project > Client
-
-Billing calculations must respect this override order.
-
-11. DATA VALIDITY RULES (CRITICAL)
-
-The following filters are considered standard across reporting:
-
-- Active records:
-  IsActive = 1
-
-- Valid EOD entries:
-  IsApproved = 1 AND IsDeleted = 0 AND IsRejected = 0
-
-- Active allocations:
-  ProjectResource.IsActive = 1
-
-These conditions must always be applied when computing metrics.
-
-12. RELATIONSHIP SUMMARY
-
-- Client → Project (1 to many)
-- Project → ProjectResource (1 to many)
-- Resource → ProjectResource (1 to many)
-- Resource → TS_EODDetails (1 to many)
-- Client → BusinessUnit / Organization / Function (many to one)
-
-13. REPORTING PRINCIPLES
-
-- Always filter inactive records unless explicitly required
-- Avoid mixing system status (IsActive) with business status (StatusId)
-- Prefer ProjectResource for allocation and billing analysis
-- Prefer TS_EODDetails for work tracking and effort metrics
-
-14. SEMANTIC LAYER USAGE
-
-This knowledge document is used to:
-- provide business context to the LLM
-- ensure correct interpretation of metrics and glossary terms
-- enforce consistent filtering and relationships
-
-All metrics and glossary definitions must align with these rules.
-
-STRICT SCHEMA ENFORCEMENT:
-
-Only use tables and columns that exist in the database schema.
-
-Do NOT generate or assume:
-- Table names not present in the schema
-- Columns not present in the schema
-
-Examples of INVALID behavior:
-- Using table 'EMP' if it does not exist
-- Using column 'EmployeeName' if it does not exist
-
-If the required data is not available in known tables, return no result instead of guessing.
-
-QUERY SIMPLICITY RULE:
-
-Always generate the simplest possible query that answers the question.
-
-Avoid:
-- unnecessary joins
-- subqueries
-- extra tables
-
-Only include tables that are strictly required.
-
-NO GUESSING RULE:
-
-If a user query references an entity that cannot be mapped to a known table or column, do not infer or guess.
-
-Instead:
-- Use closest matching known table
-OR
-- Return that data is not available
-
-Never invent schema elements.
+PROJECT TIMELINE COLUMNS:
+  Planned dates:  Project.StartDate / Project.EndDate
+  Actual dates:   Project.ActualStartDate / Project.ActualEndDate
         """.strip(),
     },
     {
         "title": "PRMS Join Rules and Status Lookup Guide",
         "content": """
-CONFIRMED JOIN RULES FOR THE PRMS SQL SERVER SCHEMA
+PRMS STATUS DISAMBIGUATION
 
-These rules are not enforced as database foreign keys but are confirmed correct
-by the project team. Always use these join paths when generating SQL queries.
+Two separate concepts control entity status — do NOT confuse them:
 
-1. CLIENT STATUS LOOKUP
-   Join path: Client.StatusId -> Status.StatusId WHERE Status.ReferenceId = 1
-   SQL:
-       JOIN [Status] ON [Client].[StatusId] = [Status].[StatusId]
-                     AND [Status].[ReferenceId] = 1
-   Notes:
-   - Client.StatusId references Status.StatusId, NOT Status.ReferenceId
-   - The ReferenceId = 1 filter restricts to client-domain status values
-   - Do NOT join using Client.ClientId = Status.ReferenceId (wrong column)
+1. IsActive (bit column on entity tables): system-level on/off flag.
+   IsActive = 1 means the record is active/enabled in the system.
 
-2. PROJECT STATUS LOOKUP
-   Join path: Project.ProjectStatusId -> Status.StatusId WHERE Status.ReferenceId = 2
-   SQL:
-       JOIN [Status] ON [Project].[ProjectStatusId] = [Status].[StatusId]
-                     AND [Status].[ReferenceId] = 2
-   Notes:
-   - Projects use ProjectStatusId (not StatusId) to reference their status
-   - The ReferenceId = 2 filter restricts to project-domain status values
+2. Status.StatusName via StatusId or ProjectStatusId: business lifecycle label
+   (e.g., Active, Inactive, On Hold, Closed).
+   The Status table is shared across domains; always filter by ReferenceId.
 
-3. PROJECT → CLIENT JOIN
-   Join path: Project.ClientId -> Client.ClientId
-   SQL:
-       JOIN [Client] ON [Project].[ClientId] = [Client].[ClientId]
-   Notes:
-   - This is a standard parent-child join
-   - Use Client.ClientName for the human-readable client name
+Rules:
+- "Show active clients"        → WHERE Client.IsActive = 1
+- "Show client status/label"   → JOIN [Status] ON [Client].[StatusId] = [Status].[StatusId]
+                                              AND [Status].[ReferenceId] = 1
+- "Show active projects"       → WHERE Project.IsActive = 1
+- "Show project status/label"  → JOIN [Status] ON [Project].[ProjectStatusId] = [Status].[StatusId]
+                                              AND [Status].[ReferenceId] = 2
 
-4. RESOURCE SELF-JOIN (REPORTING HIERARCHY)
-   Join path: Resource.ReportingTo -> Resource.ResourceId  (self-join)
-   SQL:
-       JOIN [Resource] AS [Manager]
-            ON [Resource].[ReportingTo] = [Manager].[ResourceId]
-   Notes:
-   - ReportingTo stores the ResourceId of the direct manager
-   - Use a table alias (e.g. Manager) for the manager side of the join
-   - IsReportingPerson = 1 identifies resources who are managers
-   - To list employees under a specific manager, filter: Manager.ResourceName = '<name>'
-
-STATUS TABLE DOMAIN REFERENCE IDS
-
-The Status table is shared across multiple modules. Always filter by ReferenceId:
-  - ReferenceId = 1  → Client Status values (e.g. Active, Inactive, Closed)
-  - ReferenceId = 2  → Project Status values
-  - ReferenceId = 3  → Resource Status values
-  - ReferenceId = 4  → Email Queue Status values
-
-Never read a status without also filtering ReferenceId, or you will mix statuses
-from different modules.
-
-ENTITY STATUS vs ISACTIVE FLAG
-
-Two concepts exist for status:
-  a) IsActive (bit column on each entity table) — system-level active flag
-  b) Status.StatusName via StatusId — business-level lifecycle status label
-
-IsActive is a boolean flag. Status.StatusName is the descriptive label.
-For "show active clients", use Client.IsActive = 1.
-For "show client status", join to Status using the join rule above.
-Do NOT confuse these two.
-
-CLIENT NAME COLUMN
-
-Always use Client.ClientName for the client name in queries.
-Do NOT use Project_Details_PRMS.DFINT_ClientName — it is a denormalized copy.
-For entity-level client questions, always query the Client table directly.
-
-RESOURCE NAME COLUMN
-
-Always use Resource.ResourceName for the employee or resource name.
-For manager names in a self-join, use Manager.ResourceName (with alias).
+CRITICAL WARNINGS:
+- Do NOT join using Client.ClientId = Status.ReferenceId — that is wrong.
+  Correct join is: Client.StatusId = Status.StatusId
+- Projects use ProjectStatusId (not StatusId) to reference their status.
+- Active resources: r.IsActive = 1 AND r.StatusId = 8
+  (StatusId 8 = "Resource - Active" in the Status table, ReferenceId = 3)
         """.strip(),
     },
     # -------------------------------------------------------------------------

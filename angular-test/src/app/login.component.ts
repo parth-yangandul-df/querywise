@@ -10,7 +10,10 @@ import { CommonModule } from '@angular/common';
   standalone: true,
   imports: [FormsModule, CommonModule],
   template: `
-    <div class="page">
+    <div class="page" [class.dark]="isDark()">
+      <button class="theme-toggle" (click)="toggleTheme()" aria-label="Toggle theme">
+        {{ isDark() ? '☀️' : '🌙' }}
+      </button>
       <div class="card">
         <!-- Logo / title -->
         <div class="brand">
@@ -84,18 +87,35 @@ import { CommonModule } from '@angular/common';
       display: flex;
       align-items: center;
       justify-content: center;
-      background: linear-gradient(135deg, #f0f4ff 0%, #faf5ff 100%);
+      background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       padding: 1rem;
+      position: relative;
+      transition: background 0.3s ease;
     }
 
+    .theme-toggle {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: var(--card-bg);
+      border: 1.5px solid var(--input-border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 1.2rem;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .theme-toggle:hover { border-color: var(--input-focus); }
+
     .card {
-      background: #fff;
+      background: var(--card-bg);
       border-radius: 16px;
-      box-shadow: 0 4px 24px rgba(0,0,0,.10);
+      box-shadow: 0 4px 24px var(--card-shadow);
       padding: 40px 36px 32px;
       width: 100%;
       max-width: 400px;
+      transition: background 0.3s ease, box-shadow 0.3s ease;
     }
 
     .brand { text-align: center; margin-bottom: 28px; }
@@ -112,8 +132,8 @@ import { CommonModule } from '@angular/common';
       letter-spacing: .5px;
       margin-bottom: 12px;
     }
-    h1 { margin: 0 0 4px; font-size: 1.4rem; color: #1e293b; font-weight: 700; }
-    .tagline { margin: 0; color: #64748b; font-size: .875rem; }
+    h1 { margin: 0 0 4px; font-size: 1.4rem; color: var(--text-primary); font-weight: 700; }
+    .tagline { margin: 0; color: var(--text-secondary); font-size: .875rem; }
 
     /* Quick fill */
     .quick-fill {
@@ -123,7 +143,7 @@ import { CommonModule } from '@angular/common';
       margin-bottom: 22px;
       flex-wrap: wrap;
     }
-    .quick-label { font-size: .75rem; color: #94a3b8; white-space: nowrap; }
+    .quick-label { font-size: .75rem; color: var(--text-muted); white-space: nowrap; }
     .chip {
       border: none;
       border-radius: 20px;
@@ -143,21 +163,23 @@ import { CommonModule } from '@angular/common';
       display: block;
       font-size: .8rem;
       font-weight: 600;
-      color: #374151;
+      color: var(--text-secondary);
       margin-bottom: 6px;
     }
     input {
       width: 100%;
       padding: 10px 12px;
-      border: 1.5px solid #e2e8f0;
+      border: 1.5px solid var(--input-border);
       border-radius: 8px;
       font-size: .95rem;
-      color: #1e293b;
+      color: var(--text-primary);
+      background: var(--card-bg);
       box-sizing: border-box;
       transition: border-color .15s;
       outline: none;
     }
-    input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.12); }
+    input:focus { border-color: var(--input-focus); box-shadow: 0 0 0 3px rgba(99,102,241,.12); }
+    input::placeholder { color: var(--text-muted); }
 
     .error-banner {
       background: #fef2f2;
@@ -188,12 +210,12 @@ import { CommonModule } from '@angular/common';
     .creds {
       margin-top: 24px;
       font-size: .8rem;
-      color: #64748b;
+      color: var(--text-secondary);
     }
-    summary { cursor: pointer; user-select: none; color: #94a3b8; }
+    summary { cursor: pointer; user-select: none; color: var(--text-muted); }
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid #f1f5f9; }
-    th { color: #94a3b8; font-weight: 600; font-size: .75rem; }
+    th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--table-border); }
+    th { color: var(--text-muted); font-weight: 600; font-size: .75rem; }
 
     .badge {
       display: inline-block;
@@ -212,8 +234,21 @@ export class LoginComponent {
   password = '';
   loading = signal(false);
   error = signal('');
+  isDark = signal(false);
 
-  constructor(private router: Router) {}
+  constructor(private router: Router) {
+    const stored = localStorage.getItem('qw_theme');
+    const dark = stored === 'dark';
+    this.isDark.set(dark);
+    document.documentElement.classList.toggle('dark', dark);
+  }
+
+  toggleTheme() {
+    this.isDark.update(v => !v);
+    const dark = this.isDark();
+    localStorage.setItem('qw_theme', dark ? 'dark' : 'light');
+    document.documentElement.classList.toggle('dark', dark);
+  }
 
   fill(email: string, password: string) {
     this.email = email;

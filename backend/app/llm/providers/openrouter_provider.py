@@ -32,7 +32,6 @@ from app.llm.base_provider import (
     LLMResponse,
 )
 from app.llm.providers.openai_provider import OpenAIProvider
-from app.llm.tracing import trace_llm_call
 
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -66,39 +65,15 @@ class OpenRouterProvider(OpenAIProvider):
         messages: list[LLMMessage],
         config: LLMConfig,
     ) -> AsyncIterator[str]:
-        with trace_llm_call(
-            provider="openrouter",
-            model=config.model,
-            operation="stream",
-            metadata={
-                "temperature": config.temperature,
-                "max_tokens": config.max_tokens,
-            },
-        ) as run:
-            async for token in super().stream(messages, config):
-                yield token
-            if run is not None:
-                run.end(outputs={"status": "stream_complete"})
+        async for token in super().stream(messages, config):
+            yield token
 
     async def complete(
         self,
         messages: list[LLMMessage],
         config: LLMConfig,
     ) -> LLMResponse:
-        with trace_llm_call(
-            provider="openrouter",
-            model=config.model,
-            operation="complete",
-            metadata={
-                "temperature": config.temperature,
-                "max_tokens": config.max_tokens,
-                "messages_count": len(messages),
-            },
-        ) as run:
-            response = await super().complete(messages, config)
-            if run is not None:
-                run.end(outputs={"content": response.content[:500], "model": response.model})
-            return response
+        return await super().complete(messages, config)
 
     def list_models(self) -> list[str]:
         return [

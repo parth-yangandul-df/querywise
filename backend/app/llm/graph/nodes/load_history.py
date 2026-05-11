@@ -16,6 +16,7 @@ from typing import Any
 
 from sqlalchemy import desc, select
 
+from app.core.metrics import timed_node
 from app.db.models.query_history import QueryExecution
 from app.llm.graph.state import GraphState
 
@@ -25,6 +26,7 @@ _MAX_TURNS = 6
 _SUMMARY_TRUNCATE = 400  # chars per assistant turn
 
 
+@timed_node("load_history")
 async def load_history(state: GraphState) -> dict[str, Any]:
     """Load recent session turns from the database into GraphState."""
     session_id_str = state.get("session_id")
@@ -42,72 +44,76 @@ async def load_history(state: GraphState) -> dict[str, Any]:
             }
         )
 
-    db = state["db"]
+    db_factory = state["db"]
     try:
         session_id = uuid.UUID(session_id_str)
     except ValueError:
         return _empty_history()
 
     try:
-        result = await db.execute(
-            select(QueryExecution)
-            .where(QueryExecution.session_id == session_id)
-            .order_by(desc(QueryExecution.created_at))
-            .limit(_MAX_TURNS)
-        )
-        rows: list[QueryExecution] = list(reversed(result.scalars().all()))
+        async with db_factory() as db:
+            result = await db.execute(
+                select(QueryExecution)
+                .where(QueryExecution.session_id == session_id)
+                .order_by(desc(QueryExecution.created_at))
+                .limit(_MAX_TURNS)
+            )
+            rows: list[QueryExecution] = list(reversed(result.scalars().all()))
+
+            if not rows:
+                return _empty_history()
+
+            # Build compacted [{role, content}] message list
+            history: list[dict] = []
+            for row in rows:
+                # User turn — always the natural language question
+                history.append({"role": "user", "content": row.natural_language})
+                # Assistant turn — result_summary for query/explain, or clarification message
+                assistant_content = _assistant_content(row)
+                if assistant_content:
+                    history.append({"role": "assistant", "content": assistant_content})
+
+            # Trim to last _MAX_TURNS messages (user+assistant pairs = _MAX_TURNS each)
+            # Keep at most 3 user + 3 assistant = 6 messages
+            history = history[-_MAX_TURNS:]
+
+            # Extract last SQL + result preview from the most recent successful query turn
+            last_sql: str | None = None
+            last_columns: list[str] | None = None
+            last_preview: list[list] | None = None
+            last_query_context: dict | None = None
+            for row in reversed(rows):
+                if row.turn_type == "query" and row.execution_status == "success":
+                    last_sql = row.generated_sql or row.final_sql
+                    last_columns = row.result_columns
+                    last_preview = row.result_preview_rows
+                    # Build dedicated follow-up context from turn_context
+                    if row.turn_context:
+                        turn_ctx = row.turn_context if isinstance(row.turn_context, dict) else {}
+                        last_query_context = {
+                            "resolved_question": turn_ctx.get("resolved_question"),
+                            "sql": last_sql,
+                            "answer": turn_ctx.get("answer"),
+                            "result_columns": last_columns,
+                            # Compact: only 5 rows for follow-up prompts
+                            "result_preview_rows": last_preview[:5] if last_preview else None,
+                            "result_status": turn_ctx.get("result_status", "success"),
+                            # Cached schema from previous build_context — enables
+                            # follow-up validation and error recovery without re-linking.
+                            "schema_tables": turn_ctx.get("schema_tables") or {},
+                        }
+                    break
+
+            return {
+                "loaded_history": history,
+                "last_generated_sql": last_sql,
+                "last_result_columns": last_columns,
+                "last_result_preview_rows": last_preview,
+                "last_query_context": last_query_context,
+            }
     except Exception:
         logger.warning("load_history: failed to load session history", exc_info=True)
         return _empty_history()
-
-    if not rows:
-        return _empty_history()
-
-    # Build compacted [{role, content}] message list
-    history: list[dict] = []
-    for row in rows:
-        # User turn — always the natural language question
-        history.append({"role": "user", "content": row.natural_language})
-        # Assistant turn — result_summary for query/explain, or clarification message
-        assistant_content = _assistant_content(row)
-        if assistant_content:
-            history.append({"role": "assistant", "content": assistant_content})
-
-    # Trim to last _MAX_TURNS messages (user+assistant pairs = _MAX_TURNS each)
-    # Keep at most 3 user + 3 assistant = 6 messages
-    history = history[-_MAX_TURNS:]
-
-    # Extract last SQL + result preview from the most recent successful query turn
-    last_sql: str | None = None
-    last_columns: list[str] | None = None
-    last_preview: list[list] | None = None
-    last_query_context: dict | None = None
-    for row in reversed(rows):
-        if row.turn_type == "query" and row.execution_status == "success":
-            last_sql = row.generated_sql or row.final_sql
-            last_columns = row.result_columns
-            last_preview = row.result_preview_rows
-            # Build dedicated follow-up context from turn_context
-            if row.turn_context:
-                turn_ctx = row.turn_context if isinstance(row.turn_context, dict) else {}
-                last_query_context = {
-                    "resolved_question": turn_ctx.get("resolved_question"),
-                    "sql": last_sql,
-                    "answer": turn_ctx.get("answer"),
-                    "result_columns": last_columns,
-                    # Compact: only 5 rows for follow-up prompts
-                    "result_preview_rows": last_preview[:5] if last_preview else None,
-                    "result_status": turn_ctx.get("result_status", "success"),
-                }
-            break
-
-    return {
-        "loaded_history": history,
-        "last_generated_sql": last_sql,
-        "last_result_columns": last_columns,
-        "last_result_preview_rows": last_preview,
-        "last_query_context": last_query_context,
-    }
 
 
 def _assistant_content(row: QueryExecution) -> str | None:
@@ -115,8 +121,6 @@ def _assistant_content(row: QueryExecution) -> str | None:
     if row.turn_type == "clarification":
         # Use result_summary which stores the clarification message
         content = row.result_summary
-    elif row.turn_type == "show_sql":
-        content = f"[SQL shown]\n{row.final_sql or row.generated_sql or ''}"
     elif row.turn_type == "explain_result":
         content = row.result_summary
     else:

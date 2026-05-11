@@ -5,9 +5,19 @@
   <title>AngularTest</title>
   <base href="/">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="qw-api-url" content="http://chatbot-api.dfstage.space:8000">
+  <meta name="qw-api-url" content="http://localhost:8000">
   <script>
     (function () {
+      // Apply theme before Angular boots to prevent flash of light mode
+      try {
+        var theme = localStorage.getItem('qw_theme');
+        if (theme === 'dark') {
+          document.documentElement.classList.add('dark');
+          document.documentElement.style.background = '#0f172a';
+          document.body && (document.body.style.background = '#0f172a');
+        }
+      } catch (e) {}
+
       var meta = document.querySelector('meta[name="qw-api-url"]');
       var value = meta && meta.content ? meta.content : '';
       if (value && !window.__QW_API_URL__) {

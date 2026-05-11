@@ -16,7 +16,7 @@ interface Connection {
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
-    <div class="page">
+    <div class="page" [class.dark]="isDark()">
       <!-- Top bar -->
       <header class="topbar">
         <div class="brand">
@@ -28,6 +28,9 @@ interface Connection {
             <span class="user-email">{{ userEmail }}</span>
             <span class="badge" [class]="'badge-' + userRole">{{ userRole }}</span>
           </div>
+          <button class="btn-theme" (click)="toggleTheme()" aria-label="Toggle theme">
+            <span class="theme-icon">{{ isDark() ? '☀️' : '🌙' }}</span>
+          </button>
           <button class="btn-open-chat" (click)="openQueryWiseChat()">Open QueryWise Chat</button>
           <button class="btn-logout" (click)="logout()">Sign out</button>
         </div>
@@ -72,10 +75,11 @@ interface Connection {
   styles: [`
     .page {
       min-height: 100vh;
-      background: #f8fafc;
+      background: var(--bg-page);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       display: flex;
       flex-direction: column;
+      transition: background-color 0.2s ease;
     }
 
     /* Top bar */
@@ -85,11 +89,12 @@ interface Connection {
       justify-content: space-between;
       padding: 0 24px;
       height: 56px;
-      background: #fff;
-      border-bottom: 1px solid #e2e8f0;
+      background: var(--bg-topbar);
+      border-bottom: 1px solid var(--border-color);
       position: sticky;
       top: 0;
       z-index: 10;
+      transition: background-color 0.2s ease, border-color 0.2s ease;
     }
 
     .brand { display: flex; align-items: center; gap: 10px; }
@@ -102,11 +107,11 @@ interface Connection {
       font-weight: 700;
       display: flex; align-items: center; justify-content: center;
     }
-    .brand-name { font-weight: 700; font-size: 1rem; color: #1e293b; }
+    .brand-name { font-weight: 700; font-size: 1rem; color: var(--text-primary); }
 
     .user-info { display: flex; align-items: center; gap: 14px; }
     .user-meta { display: flex; align-items: center; gap: 8px; }
-    .user-email { font-size: .85rem; color: #64748b; }
+    .user-email { font-size: .85rem; color: var(--text-secondary); }
 
     .badge {
       display: inline-block;
@@ -117,35 +122,49 @@ interface Connection {
       text-transform: uppercase;
       letter-spacing: .04em;
     }
-    .badge-admin   { background: #e0e7ff; color: #4338ca; }
-    .badge-manager { background: #fef9c3; color: #92400e; }
-    .badge-user    { background: #dcfce7; color: #166534; }
+    .badge-admin   { background: var(--badge-admin-bg); color: var(--badge-admin-text); }
+    .badge-manager { background: var(--badge-manager-bg); color: var(--badge-manager-text); }
+    .badge-user    { background: var(--badge-user-bg); color: var(--badge-user-text); }
+
+    .btn-theme {
+      padding: 6px 10px;
+      border: 1.5px solid var(--border-color);
+      border-radius: 8px;
+      background: var(--btn-logout-bg);
+      cursor: pointer;
+      transition: all .15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .btn-theme:hover { border-color: var(--btn-logout-hover-border); }
+    .theme-icon { font-size: 1rem; }
 
     .btn-logout {
       padding: 6px 14px;
-      border: 1.5px solid #e2e8f0;
+      border: 1.5px solid var(--btn-logout-border);
       border-radius: 8px;
-      background: #fff;
-      color: #64748b;
+      background: var(--btn-logout-bg);
+      color: var(--btn-logout-text);
       font-size: .85rem;
       font-weight: 500;
       cursor: pointer;
       transition: all .15s;
     }
-    .btn-logout:hover { border-color: #cbd5e1; color: #1e293b; }
+    .btn-logout:hover { border-color: var(--btn-logout-hover-border); color: var(--btn-logout-hover-text); }
 
     .btn-open-chat {
       padding: 6px 14px;
-      border: 1.5px solid #1e293b;
+      border: 1.5px solid var(--btn-chat-bg);
       border-radius: 8px;
-      background: #1e293b;
-      color: #fff;
+      background: var(--btn-chat-bg);
+      color: var(--btn-chat-text);
       font-size: .85rem;
       font-weight: 500;
       cursor: pointer;
       transition: all .15s;
     }
-    .btn-open-chat:hover { background: #334155; border-color: #334155; }
+    .btn-open-chat:hover { background: var(--btn-chat-hover-bg); border-color: var(--btn-chat-hover-border); }
 
     /* Content */
     .content { padding: 32px 24px; max-width: 900px; margin: 0 auto; width: 100%; box-sizing: border-box; }
@@ -154,14 +173,14 @@ interface Connection {
       padding: 16px 20px;
       border-radius: 10px;
       font-size: .875rem;
-      color: #64748b;
-      background: #f1f5f9;
+      color: var(--state-msg-text);
+      background: var(--state-msg-bg);
       margin-bottom: 20px;
     }
     .state-msg.warn {
-      background: #fefce8;
-      color: #92400e;
-      border: 1px solid #fde68a;
+      background: var(--state-msg-warn-bg);
+      color: var(--state-msg-warn-text);
+      border: 1px solid var(--state-msg-warn-border);
     }
     .state-msg a { color: #6366f1; }
 
@@ -176,10 +195,10 @@ interface Connection {
     }
     .conn-name {
       font-size: .9rem;
-      color: #64748b;
+      color: var(--conn-name-text);
     }
     .conn-name strong {
-      color: #1e293b;
+      color: var(--conn-name-strong);
     }
     .admin-link {
       font-size: .8rem;
@@ -195,14 +214,14 @@ interface Connection {
       gap: 10px;
       margin-bottom: 20px;
     }
-    .conn-picker label { font-size: .85rem; font-weight: 600; color: #374151; white-space: nowrap; }
+    .conn-picker label { font-size: .85rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; }
     .conn-picker select {
       padding: 7px 10px;
-      border: 1.5px solid #e2e8f0;
+      border: 1.5px solid var(--select-border);
       border-radius: 8px;
       font-size: .875rem;
-      color: #1e293b;
-      background: #fff;
+      color: var(--select-text);
+      background: var(--select-bg);
       cursor: pointer;
       outline: none;
     }
@@ -214,8 +233,23 @@ export class DashboardComponent implements OnInit {
   userEmail = '';
   userRole = '';
 
+  isDark = signal(false);
   connections = signal<Connection[]>([]);
   loadingConnections = signal(true);
+
+  constructor(private router: Router) {
+    const stored = localStorage.getItem('qw_theme');
+    const dark = stored === 'dark';
+    this.isDark.set(dark);
+    document.documentElement.classList.toggle('dark', dark);
+  }
+
+  toggleTheme() {
+    this.isDark.update((v) => !v);
+    const dark = this.isDark();
+    localStorage.setItem('qw_theme', dark ? 'dark' : 'light');
+    document.documentElement.classList.toggle('dark', dark);
+  }
 
   get roleIcon() {
     return ({ admin: '🔑', manager: '📊', user: '👤' } as Record<string, string>)[this.userRole] ?? '👤';
@@ -230,8 +264,6 @@ export class DashboardComponent implements OnInit {
       user:    'Scoped access — queries are automatically filtered to your own data only.',
     } as Record<string, string>)[this.userRole] ?? '';
   }
-
-  constructor(private router: Router) {}
 
   async ngOnInit() {
     this.userEmail = sessionStorage.getItem('qw_user_email') ?? '';

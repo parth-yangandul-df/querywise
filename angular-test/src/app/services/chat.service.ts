@@ -45,6 +45,7 @@ export interface QueryStageEvent {
 export class ChatService {
   private apiUrl = getRuntimeApiUrl();
   private sessionKeyPrefix = 'qw_chat_session_id:';
+  private abortController: AbortController | null = null;
 
   messages = signal<ChatMessage[]>([]);
   isLoading = signal(false);
@@ -119,6 +120,7 @@ export class ChatService {
 
     this.isLoading.set(true);
     this.pipelineStage.set(null);
+    this.abortController = new AbortController();
 
     try {
       const response = await fetch(`${this.getApiUrl()}/api/v1/query/stream`, {
@@ -128,6 +130,7 @@ export class ChatService {
           'Authorization': `Bearer ${this.getToken()}`
         },
         credentials: 'include',
+        signal: this.abortController.signal,
         body: JSON.stringify({
           connection_id: connId,
           question: content,
@@ -162,16 +165,20 @@ export class ChatService {
           const eventData = chunk.slice(5).trim();
           if (!eventData) continue;
 
+          let event: any;
           try {
-            const event = JSON.parse(eventData);
-            if (event.type === 'stage') {
-              this.pipelineStage.set(event);
-            } else if (event.type === 'result') {
-              finalResult = event.data;
-            } else if (event.type === 'error') {
-              throw new Error(event.message);
-            }
-          } catch {}
+            event = JSON.parse(eventData);
+          } catch {
+            continue; // malformed JSON — skip this chunk only
+          }
+
+          if (event.type === 'stage') {
+            this.pipelineStage.set(event);
+          } else if (event.type === 'result') {
+            finalResult = event.data;
+          } else if (event.type === 'error') {
+            throw new Error(event.message || 'An error occurred');
+          }
         }
       }
 
@@ -184,22 +191,37 @@ export class ChatService {
         this.messages.update(msgs => [...msgs, assistantMsg]);
       }
     } catch (e: unknown) {
-      const errorMsg = e instanceof Error ? e.message : 'An unexpected error occurred';
-      const errorMsgBubble: ChatMessage = {
-        id: `${Date.now()}-error`,
-        role: 'error',
-        errorMessage: errorMsg
-      };
-      this.messages.update(msgs => [...msgs, errorMsgBubble]);
+      // AbortError means the user clicked cancel — no error bubble needed
+      if (e instanceof Error && e.name === 'AbortError') {
+        this.messages.update(msgs => msgs.filter(m => m.id !== userMsg.id));
+      } else {
+        const errorMsg = e instanceof Error ? e.message : 'An unexpected error occurred';
+        const errorMsgBubble: ChatMessage = {
+          id: `${Date.now()}-error`,
+          role: 'error',
+          errorMessage: errorMsg
+        };
+        this.messages.update(msgs => [...msgs, errorMsgBubble]);
+      }
     } finally {
       this.isLoading.set(false);
       this.pipelineStage.set(null);
+      this.abortController = null;
+    }
+  }
+
+  cancelQuery(): void {
+    if (this.abortController) {
+      this.abortController.abort();
     }
   }
 
   async resetChat() {
     const connId = this.connectionId();
     if (!connId) return;
+
+    // Abort any in-flight request before resetting
+    this.cancelQuery();
 
     this.messages.set([]);
     this.clearStoredSession(connId);

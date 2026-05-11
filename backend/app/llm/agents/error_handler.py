@@ -15,28 +15,46 @@ class ErrorResolution:
     should_retry: bool
 
 
-ERROR_SYSTEM_PROMPT = """You are a SQL debugging expert. A SQL query failed to execute against a PostgreSQL database.
-Your job is to analyze the error and produce a corrected SQL query.
+_ERROR_SYSTEM_PROMPT_TEMPLATE = (
+    "You are a SQL debugging expert. A SQL query failed to execute against"
+    " a {dialect_label} database.\n"
+    "Your job is to analyze the error and produce a corrected SQL query.\n\n"
+    "Rules:\n"
+    "- Fix ONLY the issue causing the error. Keep the intent of the original query intact.\n"
+    "- Generate ONLY SELECT statements.\n"
+    "- Follow {dialect_label} syntax exactly:{dialect_hints}\n"
+    "- If the error is unrecoverable (data doesn't exist, permission denied),"
+    " set should_retry to false.\n\n"
+    'Output format:\n{{"corrected_sql": "THE FIXED SQL",'
+    ' "explanation": "What was wrong and how you fixed it", "should_retry": true/false}}'
+)
 
-You will receive:
-1. The original natural language question
-2. The SQL that failed
-3. The error message from the database
-4. The database schema context
-5. Any previous failed attempts
+_DIALECT_LABELS = {
+    "sqlserver": "SQL Server",
+    "postgresql": "PostgreSQL",
+}
 
-Rules:
-- Fix ONLY the issue causing the error
-- Keep the intent of the original query
-- Generate ONLY SELECT statements
-- If the error is unrecoverable (e.g., the user is asking about data that doesn't exist), set should_retry to false
+_DIALECT_HINTS = {
+    "sqlserver": (
+        " Use SELECT TOP N (not LIMIT). Quote identifiers with [square brackets]."
+        " Use GETDATE() not NOW(). Use LEN() not LENGTH()."
+    ),
+    "postgresql": " Use LIMIT N. Quote identifiers with double quotes. Use NOW().",
+}
 
-Output format:
-{
-  "corrected_sql": "THE FIXED SQL",
-  "explanation": "What was wrong and how you fixed it",
-  "should_retry": true/false
-}"""
+
+def _build_system_prompt(dialect: str) -> str:
+    label = _DIALECT_LABELS.get(dialect, dialect.upper())
+    hints = _DIALECT_HINTS.get(dialect, "")
+    return _ERROR_SYSTEM_PROMPT_TEMPLATE.format(dialect_label=label, dialect_hints=hints)
+
+
+def _compact_schema(schema_tables: dict[str, list[str]]) -> str:
+    """Render schema_tables as a compact table(col, col) list — ~200 tokens vs ~4000."""
+    if not schema_tables:
+        return "(no schema available)"
+    lines = [f"{tbl}({', '.join(cols)})" for tbl, cols in schema_tables.items()]
+    return "\n".join(lines)
 
 
 class ErrorHandlerAgent:
@@ -52,11 +70,18 @@ class ErrorHandlerAgent:
         question: str,
         failed_sql: str,
         error_message: str,
-        schema_context: str,
+        schema_tables: dict[str, list[str]],
+        dialect: str = "sqlserver",
         attempt_number: int = 1,
         previous_attempts: list[str] | None = None,
     ) -> ErrorResolution:
-        """Analyze a SQL error and produce corrected SQL."""
+        """Analyze a SQL error and produce corrected SQL.
+
+        Args:
+            schema_tables: Compact {TABLE: [col, ...]} dict — NOT the full prompt_context.
+                           Keeps the payload small (~200 tokens vs ~4000).
+            dialect: SQL dialect string from connector_type (e.g. "sqlserver", "postgresql").
+        """
         if attempt_number > self.MAX_RETRIES:
             return ErrorResolution(
                 corrected_sql="",
@@ -68,22 +93,24 @@ class ErrorHandlerAgent:
         if previous_attempts:
             previous = "\n\nPrevious failed attempts:\n" + "\n---\n".join(previous_attempts)
 
+        compact_schema = _compact_schema(schema_tables)
+
         user_prompt = f"""Original question: "{question}"
 
 Failed SQL (attempt {attempt_number}):
 {failed_sql}
 
-Error from database:
+Error:
 {error_message}
 
-Database schema:
-{schema_context}
+Available tables and columns:
+{compact_schema}
 {previous}
 
-Analyze the error and provide a corrected SQL query. Respond with JSON: corrected_sql, explanation, should_retry."""
+Provide a corrected SQL query. Respond with JSON: corrected_sql, explanation, should_retry."""
 
         messages = [
-            LLMMessage(role="system", content=ERROR_SYSTEM_PROMPT),
+            LLMMessage(role="system", content=_build_system_prompt(dialect)),
             LLMMessage(role="user", content=user_prompt),
         ]
 

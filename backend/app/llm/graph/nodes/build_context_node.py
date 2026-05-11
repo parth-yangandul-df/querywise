@@ -14,6 +14,7 @@ import logging
 import uuid
 from typing import Any
 
+from app.core.metrics import timed_node
 from app.llm.graph.state import GraphState
 from app.semantic.context_builder import build_context
 
@@ -60,11 +61,12 @@ CRITICAL RULES:
 """
 
 
+@timed_node("build_context")
 async def build_context_node(state: GraphState) -> dict[str, Any]:
     """Run schema linking and context assembly for the current question."""
     resolved_question = state.get("resolved_question") or state["question"]
     connection_id = uuid.UUID(state["connection_id"])
-    db = state["db"]
+    db_factory = state["db"]
     resource_id = state.get("resource_id")
     employee_id = state.get("employee_id")
 
@@ -79,45 +81,46 @@ async def build_context_node(state: GraphState) -> dict[str, Any]:
         )
 
     # connector_type is already in state — no extra DB round-trip needed
-    context = await build_context(
-        db, connection_id, resolved_question, dialect=state["connector_type"]
-    )
+    async with db_factory() as db:
+        context = await build_context(
+            db, connection_id, resolved_question, dialect=state["connector_type"]
+        )
 
-    if context.sample_queries:
-        for sq in context.sample_queries:
-            logger.debug(
-                "build_context_node: sample_query q=%r sql=%r",
-                sq.natural_language,
-                sq.sql_query[:100],
+        if context.sample_queries:
+            for sq in context.sample_queries:
+                logger.debug(
+                    "build_context_node: sample_query q=%r sql=%r",
+                    sq.natural_language,
+                    sq.sql_query[:100],
+                )
+            logger.info(
+                "build_context_node: sample_queries count=%d",
+                len(context.sample_queries),
             )
+
+        # Inject scope constraints for 'user' role
+        prompt_context = context.prompt_context
+        if resource_id is not None:
+            prompt_context = _SCOPE_CONSTRAINT_TEMPLATE.format(resource_id=resource_id) + prompt_context
+        if employee_id is not None:
+            prompt_context = (
+                _EMPLOYEE_ID_SCOPE_TEMPLATE.format(employee_id=employee_id) + prompt_context
+            )
+
+        schema_tables = {
+            lt.table.table_name.upper(): [c.column_name.upper() for c in lt.columns]
+            for lt in context.tables
+        }
+
         logger.info(
-            "build_context_node: sample_queries count=%d",
-            len(context.sample_queries),
+            "build_context_node: resolved=%r tables=%d embedding=%s",
+            resolved_question[:80],
+            len(context.tables),
+            context.question_embedding is not None,
         )
 
-    # Inject scope constraints for 'user' role
-    prompt_context = context.prompt_context
-    if resource_id is not None:
-        prompt_context = _SCOPE_CONSTRAINT_TEMPLATE.format(resource_id=resource_id) + prompt_context
-    if employee_id is not None:
-        prompt_context = (
-            _EMPLOYEE_ID_SCOPE_TEMPLATE.format(employee_id=employee_id) + prompt_context
-        )
-
-    schema_tables = {
-        lt.table.table_name.upper(): [c.column_name.upper() for c in lt.columns]
-        for lt in context.tables
-    }
-
-    logger.info(
-        "build_context_node: resolved=%r tables=%d embedding=%s",
-        resolved_question[:80],
-        len(context.tables),
-        context.question_embedding is not None,
-    )
-
-    return {
-        "prompt_context": prompt_context,
-        "schema_tables": schema_tables,
-        "question_embedding": context.question_embedding,
-    }
+        return {
+            "prompt_context": prompt_context,
+            "schema_tables": schema_tables,
+            "question_embedding": context.question_embedding,
+        }

@@ -13,7 +13,6 @@ from app.llm.base_provider import (
     LLMResponse,
 )
 from app.llm.retry import llm_retry
-from app.llm.tracing import trace_llm_call
 
 logger = __import__("logging").getLogger(__name__)
 
@@ -54,19 +53,7 @@ class AnthropicProvider(BaseLLMProvider):
             kwargs["stop_sequences"] = config.stop_sequences
 
         try:
-            with trace_llm_call(
-                provider="anthropic",
-                model=config.model,
-                operation="complete",
-                metadata={
-                    "temperature": config.temperature,
-                    "max_tokens": config.max_tokens,
-                    "messages_count": len(messages),
-                },
-            ) as run:
-                response = await self._client.messages.create(**kwargs)
-                if run is not None:
-                    run.end(outputs={"content": response.content[0].text[:500], "model": response.model})
+            response = await self._client.messages.create(**kwargs)
         except Exception as err:
             raise_if_provider_rate_limited(err, "Anthropic")
             logger.error("Anthropic API error: %s", err, exc_info=True)
@@ -105,20 +92,9 @@ class AnthropicProvider(BaseLLMProvider):
             kwargs["system"] = system_msg
 
         try:
-            with trace_llm_call(
-                provider="anthropic",
-                model=config.model,
-                operation="stream",
-                metadata={
-                    "temperature": config.temperature,
-                    "max_tokens": config.max_tokens,
-                },
-            ) as run:
-                async with self._client.messages.stream(**kwargs) as stream:
-                    async for text in stream.text_stream:
-                        yield text
-                if run is not None:
-                    run.end(outputs={"status": "stream_complete"})
+            async with self._client.messages.stream(**kwargs) as stream:
+                async for text in stream.text_stream:
+                    yield text
         except Exception as err:
             raise_if_provider_rate_limited(err, "Anthropic")
             logger.error("Anthropic stream error: %s", exc_info=True)

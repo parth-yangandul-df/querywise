@@ -20,21 +20,32 @@ def _build_default_routes() -> dict[QueryComplexity, dict]:
     # Use provider-specific model setting when available
     if provider == "ollama":
         model = settings.ollama_model
+        fast_model = model  # Ollama has one model configured
     elif provider == "openrouter":
         model = settings.openrouter_model
+        # Reuse the resolver model (gpt-4.1-nano) for simple queries — it's already
+        # a fast cheap model, no need to introduce a separate config field.
+        fast_model = settings.resolver_model or model
     else:
         model = settings.default_llm_model
+        fast_model = model
     return {
+        # Simple: single-table lookups, basic filters — use the FAST model.
+        # gpt-4.1-nano is 10-50x faster than deepseek-v3.2 and more than
+        # capable of simple SELECT + WHERE + JOIN.  Accuracy trade-off is
+        # acceptable when the alternative is a 43-second user wait.
         QueryComplexity.SIMPLE: {
             "provider": provider,
-            "model": model,
+            "model": fast_model,
             "max_tokens": 1024,
         },
+        # Moderate: aggregations, multi-table JOINs — heavy model, generous token budget.
         QueryComplexity.MODERATE: {
             "provider": provider,
             "model": model,
-            "max_tokens": 1536,
+            "max_tokens": 1500,
         },
+        # Complex: CTEs, window functions, subqueries — full budget.
         QueryComplexity.COMPLEX: {
             "provider": provider,
             "model": model,
@@ -92,6 +103,9 @@ def estimate_complexity(question: str) -> QueryComplexity:
         r"\bfilter\b",
         r"\bwhere\b",
         r"\bhaving\b",
+        # Multi-table lookups expressed in natural language (JOIN implied)
+        r"\bprojects\b.{0,40}\bresource\b",  # "projects for resource X"
+        r"\bresources\b.{0,40}\bproject\b",  # "resources on project X"
     ]
     moderate_count = sum(1 for p in moderate_signals if re.search(p, q_lower))
     if moderate_count >= 2:
@@ -105,12 +119,20 @@ def estimate_complexity(question: str) -> QueryComplexity:
 def route(
     question: str,
     routes: dict | None = None,
+    complexity_override: QueryComplexity | None = None,
 ) -> tuple[BaseLLMProvider, LLMConfig]:
-    """Route a question to the appropriate LLM provider and model."""
+    """Route a question to the appropriate LLM provider and model.
+
+    Args:
+        question: The natural language question.
+        routes: Optional custom routing rules.
+        complexity_override: Force a specific complexity tier (e.g., when schema
+            context is large and the cheap model would hallucinate).
+    """
     if routes is None:
         routes = _build_default_routes()
 
-    complexity = estimate_complexity(question)
+    complexity = complexity_override or estimate_complexity(question)
     route_config = routes.get(complexity, routes[QueryComplexity.MODERATE])
 
     provider = get_provider(route_config["provider"])
@@ -142,6 +164,27 @@ def route_for_role(
             model=settings.interpreter_model,
             temperature=0.0,
             max_tokens=512,
+        )
+        return provider, config
+
+    if role == "resolver":
+        # Intent classification + question rewrite — always use the fast resolver model.
+        provider = get_provider(settings.default_llm_provider)
+        config = LLMConfig(
+            model=settings.resolver_model,
+            temperature=0.0,
+            max_tokens=512,
+        )
+        return provider, config
+
+    if role == "error_handler":
+        # Error correction is a simple rewrite task — use the fast resolver model,
+        # not the heavy composer. Keeps retries cheap and fast.
+        provider = get_provider(settings.default_llm_provider)
+        config = LLMConfig(
+            model=settings.resolver_model,
+            temperature=0.0,
+            max_tokens=600,
         )
         return provider, config
 

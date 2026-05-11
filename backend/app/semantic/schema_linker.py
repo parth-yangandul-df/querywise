@@ -1,6 +1,8 @@
 """Maps NL terms to relevant tables and columns using hybrid search."""
 
+import asyncio
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 
@@ -19,6 +21,72 @@ from app.semantic.relevance_scorer import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# In-memory column cache — keyed by table UUID, TTL 30 minutes.
+# Eliminates repeated per-table column SELECTs across requests.
+# ---------------------------------------------------------------------------
+_COLUMN_CACHE_TTL = 1800.0  # 30 minutes
+_column_cache: dict[uuid.UUID, tuple[float, list[CachedColumn]]] = {}
+
+
+async def get_columns_for_tables(
+    db: AsyncSession,
+    table_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, list[CachedColumn]]:
+    """Return columns for each table_id, using an in-memory TTL cache.
+
+    Checks the cache first; batch-fetches only uncached table IDs from the DB,
+    then updates the cache.  This eliminates the N+1 column-loading pattern
+    across schema_linker, context_builder, and _expand_fk_neighbours.
+
+    Args:
+        db: Async SQLAlchemy session.
+        table_ids: List of table UUIDs to load columns for.
+
+    Returns:
+        Mapping of table_id → sorted list of CachedColumn objects.
+    """
+    if not table_ids:
+        return {}
+
+    now = time.monotonic()
+    result: dict[uuid.UUID, list[CachedColumn]] = {}
+    uncached: list[uuid.UUID] = []
+
+    for tid in table_ids:
+        entry = _column_cache.get(tid)
+        if entry and (now - entry[0]) < _COLUMN_CACHE_TTL:
+            result[tid] = entry[1]
+        else:
+            uncached.append(tid)
+
+    if uncached:
+        col_result = await db.execute(
+            select(CachedColumn)
+            .where(CachedColumn.table_id.in_(uncached))
+            .order_by(CachedColumn.ordinal_position)
+        )
+        cols_by_table: dict[uuid.UUID, list[CachedColumn]] = {}
+        for col in col_result.scalars().all():
+            cols_by_table.setdefault(col.table_id, []).append(col)
+
+        for tid in uncached:
+            cols = cols_by_table.get(tid, [])
+            _column_cache[tid] = (now, cols)
+            result[tid] = cols
+
+    return result
+
+
+def invalidate_column_cache(table_id: uuid.UUID) -> None:
+    """Evict a single table from the column cache (e.g. after schema re-introspection)."""
+    _column_cache.pop(table_id, None)
+
+
+def clear_column_cache() -> None:
+    """Clear the entire column cache (call after a full schema re-introspection)."""
+    _column_cache.clear()
 
 
 @dataclass
@@ -58,29 +126,24 @@ async def find_relevant_tables(
         connection_id,
     )
 
-    # Stage 1: Embedding similarity search (skip if no embedding available)
-    embedding_results: list[tuple[CachedTable, float]] = []
-    if question_embedding is not None:
-        embedding_results = await _vector_search_tables(
-            db, connection_id, question_embedding, limit=15
-        )
-
-    # Stage 2: Keyword search on table names
-    keyword_results = await _keyword_search_tables(db, connection_id, keywords)
-
-    # Stage 3: Column-name keyword search — find tables whose *columns* match keywords
-    column_hit_results = await _column_keyword_search_tables(db, connection_id, keywords)
-
-    # Stage 4: Anchor table forcing — always include tables signalled by strong domain keywords
+    # Stages 1-4: vector search runs first (it may rollback the session on failure);
+    # Keyword searches must be sequential — AsyncSession is NOT safe for concurrent use.
     anchor_table_names = _detect_anchor_tables(question_lower, keywords)
-    anchor_results: list[CachedTable] = []
-    if anchor_table_names:
-        anchor_results = await _get_tables_by_names(db, connection_id, anchor_table_names)
-        if anchor_results:
-            logger.info(
-                "schema_linker: forcing anchor tables %s",
-                [t.table_name for t in anchor_results],
-            )
+
+    if question_embedding is not None:
+        embedding_results = await _vector_search_tables(db, connection_id, question_embedding, limit=15)
+    else:
+        embedding_results = []
+
+    keyword_results = await _keyword_search_tables(db, connection_id, keywords)
+    column_hit_results = await _column_keyword_search_tables(db, connection_id, keywords)
+    anchor_results = await _get_tables_by_names(db, connection_id, anchor_table_names)
+
+    if anchor_results:
+        logger.info(
+            "schema_linker: forcing anchor tables %s",
+            [t.table_name for t in anchor_results],
+        )
 
     # Merge all candidates and score
     scored: dict[str, ScoredItem] = {}
@@ -141,8 +204,28 @@ async def find_relevant_tables(
             reason_map[key] = "relationship"
         scored[key].relationship_score = 1.0
 
+    # Identify anchor table IDs before truncation
+    anchor_ids = {
+        str(t.id) for t in anchor_results
+    } if anchor_results else set()
+
     # Sort by final score, take top N (anchors are guaranteed to exceed threshold)
     sorted_items = sorted(scored.values(), key=lambda s: s.final_score, reverse=True)
+
+    # Ensure all anchor tables survive truncation
+    if anchor_ids:
+        top_ids = {s.id for s in sorted_items[:max_tables]}
+        missing_anchors = anchor_ids - top_ids
+        if missing_anchors:
+            logger.info(
+                "schema_linker: preserving %d forced anchor tables: %s",
+                len(missing_anchors),
+                [scored[k].name for k in missing_anchors if k in scored],
+            )
+            # Take more items to include all anchors
+            extra_needed = len(missing_anchors)
+            sorted_items = sorted_items[: max_tables + extra_needed]
+
     top_items = sorted_items[:max_tables]
 
     logger.info(
@@ -150,26 +233,27 @@ async def find_relevant_tables(
         [(s.name, f"{s.final_score:.3f}", reason_map.get(s.id, "?")) for s in top_items],
     )
 
-    # Load full table data with columns
+    # Batch-load table metadata and columns (replaces N individual db.get() calls)
+    top_table_ids_for_load = [uuid.UUID(item.id) for item in top_items]
+
+    tables_result = await db.execute(
+        select(CachedTable).where(CachedTable.id.in_(top_table_ids_for_load))
+    )
+    tables_by_id = {t.id: t for t in tables_result.scalars().all()}
+
+    # Batch-load all columns via cache
+    columns_by_table = await get_columns_for_tables(db, top_table_ids_for_load)
+
     results: list[LinkedTable] = []
     for item in top_items:
         table_id = uuid.UUID(item.id)
-        table = await db.get(CachedTable, table_id)
+        table = tables_by_id.get(table_id)
         if not table:
             continue
-
-        # Load columns
-        col_result = await db.execute(
-            select(CachedColumn)
-            .where(CachedColumn.table_id == table_id)
-            .order_by(CachedColumn.ordinal_position)
-        )
-        columns = list(col_result.scalars().all())
-
         results.append(
             LinkedTable(
                 table=table,
-                columns=columns,
+                columns=columns_by_table.get(table_id, []),
                 score=item.final_score,
                 match_reason=reason_map.get(item.id, "embedding"),
             )
@@ -284,14 +368,25 @@ async def _column_keyword_search_tables(
     for col in matching_cols:
         table_col_names.setdefault(col.table_id, []).append(col.column_name)
 
-    results: list[tuple[CachedTable, float]] = []
+    # Score tables and collect IDs that pass the threshold
+    scored_ids: dict[uuid.UUID, float] = {}
     for table_id, col_names in table_col_names.items():
         score = column_keyword_score(col_names, keywords)
         if score > 0:
-            table = await db.get(CachedTable, table_id)
-            if table:
-                results.append((table, score))
+            scored_ids[table_id] = score
 
+    if not scored_ids:
+        return []
+
+    # Batch-load all matching tables in one query (replaces N individual db.get() calls)
+    tables_result = await db.execute(
+        select(CachedTable).where(CachedTable.id.in_(list(scored_ids.keys())))
+    )
+    tables_by_id = {t.id: t for t in tables_result.scalars().all()}
+
+    results: list[tuple[CachedTable, float]] = [
+        (tables_by_id[tid], score) for tid, score in scored_ids.items() if tid in tables_by_id
+    ]
     results.sort(key=lambda x: x[1], reverse=True)
     return results
 

@@ -200,15 +200,6 @@ function QueryResultView({ result }: { result: QueryResult }) {
             Summary
           </Text>
           <Text>{result.summary}</Text>
-          {result.highlights.length > 0 && (
-            <Group mt="xs" gap="xs">
-              {result.highlights.map((h, i) => (
-                <Badge key={i} variant="light">
-                  {h}
-                </Badge>
-              ))}
-            </Group>
-          )}
         </Paper>
       )}
 
@@ -260,7 +251,7 @@ function QueryResultView({ result }: { result: QueryResult }) {
         </Accordion.Item>
       </Accordion>
 
-      {result.rows.length > 0 && (
+      {result.rows.length > 0 && !(result.rows.length === 1 && result.columns.length === 1) && (
         <Paper withBorder p="sm">
           {/* Toolbar: search + match counter + export */}
           <Group mb="sm" gap="xs" align="center" justify="space-between">

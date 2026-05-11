@@ -25,9 +25,8 @@ async def list_query_history(
     stmt = select(QueryExecution).order_by(QueryExecution.created_at.desc())
     if connection_id:
         stmt = stmt.where(QueryExecution.connection_id == connection_id)
-    # user role: scope to own executions only
-    if current_user.role == "user":
-        stmt = stmt.where(QueryExecution.user_id == current_user.id)
+    # Scope to own executions only (all roles — RBAC refinements deferred)
+    stmt = stmt.where(QueryExecution.user_id == current_user.id)
     stmt = stmt.offset(offset).limit(limit)
     result = await db.execute(stmt)
     return list(result.scalars().all())
@@ -40,10 +39,7 @@ async def get_query_execution(
     current_user: User = Depends(get_current_user),
 ):
     execution = await db.get(QueryExecution, execution_id)
-    if not execution:
-        raise NotFoundError("QueryExecution", str(execution_id))
-    # user role: can only view their own records
-    if current_user.role == "user" and execution.user_id != current_user.id:
+    if not execution or execution.user_id != current_user.id:
         raise NotFoundError("QueryExecution", str(execution_id))
     return execution
 
@@ -55,9 +51,7 @@ async def toggle_favorite(
     current_user: User = Depends(get_current_user),
 ):
     execution = await db.get(QueryExecution, execution_id)
-    if not execution:
-        raise NotFoundError("QueryExecution", str(execution_id))
-    if current_user.role == "user" and execution.user_id != current_user.id:
+    if not execution or execution.user_id != current_user.id:
         raise NotFoundError("QueryExecution", str(execution_id))
     execution.is_favorite = not execution.is_favorite
     await db.flush()

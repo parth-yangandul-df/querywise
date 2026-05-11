@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_optional_user, require_role
+from app.api.deps import get_current_user, require_role
 from app.api.v1.schemas.glossary import (
     GlossaryTermCreate,
     GlossaryTermResponse,
@@ -15,6 +15,7 @@ from app.core.exceptions import NotFoundError
 from app.db.models.glossary import GlossaryTerm
 from app.db.models.user import User
 from app.db.session import get_db
+from app.semantic.glossary_resolver import invalidate_glossary_cache
 from app.services.embedding_service import embed_glossary_term
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ router = APIRouter(tags=["glossary"])
 async def list_glossary_terms(
     connection_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(
         select(GlossaryTerm)
@@ -67,6 +68,7 @@ async def create_glossary_term(
         logger.warning("Failed to embed glossary term %s", term.id, exc_info=True)
     await db.flush()
     await db.refresh(term)
+    invalidate_glossary_cache(connection_id)
     return term
 
 
@@ -78,7 +80,7 @@ async def get_glossary_term(
     connection_id: uuid.UUID,
     term_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(get_current_user),
 ):
     term = await db.get(GlossaryTerm, term_id)
     if not term or term.connection_id != connection_id:
@@ -111,6 +113,7 @@ async def update_glossary_term(
         logger.warning("Failed to embed glossary term %s", term_id, exc_info=True)
     await db.flush()
     await db.refresh(term)
+    invalidate_glossary_cache(connection_id)
     return term
 
 
@@ -129,3 +132,4 @@ async def delete_glossary_term(
         raise NotFoundError("GlossaryTerm", str(term_id))
     await db.delete(term)
     await db.flush()
+    invalidate_glossary_cache(connection_id)

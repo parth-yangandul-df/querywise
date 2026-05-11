@@ -58,41 +58,78 @@ async def test_interpret_result_no_rows():
     )
     state = _base_state(result=result)
     updates = await interpret_result(state)
-    assert updates["answer"] is None
+    assert updates["answer"] == "No matching rows found."
     assert updates["highlights"] == []
 
 
 @pytest.mark.anyio
-async def test_interpret_result_with_rows():
-    from app.llm.agents.result_interpreter import InterpretationOutput
+async def test_interpret_result_single_value():
+    """Single cell result should return plain text without LLM call."""
+    from app.llm.graph.nodes.result_interpreter import interpret_result
+
+    result = QueryResult(
+        columns=["count"],
+        column_types=["int"],
+        rows=[[42]],
+        row_count=1,
+        execution_time_ms=10.0,
+        truncated=False,
+    )
+    state = _base_state(result=result)
+    updates = await interpret_result(state)
+
+    assert updates["answer"] == "42"
+    assert updates["highlights"] == []
+    assert updates["suggested_followups"] == []
+
+
+@pytest.mark.anyio
+async def test_interpret_result_small_result_set():
+    """Results with ≤10 rows should return as markdown table without LLM call."""
     from app.llm.graph.nodes.result_interpreter import interpret_result
 
     result = QueryResult(
         columns=["Name", "Role"],
         column_types=["nvarchar", "nvarchar"],
-        rows=[["Alice", "Engineer"]],
-        row_count=1,
+        rows=[
+            ["Alice", "Engineer"],
+            ["Bob", "Designer"],
+        ],
+        row_count=2,
         execution_time_ms=10.0,
         truncated=False,
     )
-    mock_interp = InterpretationOutput(
-        summary="1 active resource found.",
-        highlights=["Alice"],
-        suggested_followups=["Only show engineers", "Group by role"],
+    state = _base_state(result=result)
+    updates = await interpret_result(state)
+
+    assert "Alice" in updates["answer"]
+    assert "Engineer" in updates["answer"]
+    assert " | " in updates["answer"]  # Markdown table format
+    assert updates["highlights"] == []
+    assert "Show SQL" in updates["suggested_followups"]
+
+
+@pytest.mark.anyio
+async def test_interpret_result_large_result_set_uses_table():
+    """Results with >10 rows should still return as markdown table (no LLM)."""
+    from app.llm.graph.nodes.result_interpreter import interpret_result
+
+    result = QueryResult(
+        columns=["Name", "Role"],
+        column_types=["nvarchar", "nvarchar"],
+        rows=[[f"Person{i}", "Engineer"] for i in range(11)],
+        row_count=11,
+        execution_time_ms=10.0,
+        truncated=False,
     )
     state = _base_state(result=result)
-    with patch(
-        "app.llm.graph.nodes.result_interpreter.route", return_value=(MagicMock(), MagicMock())
-    ):
-        with patch("app.llm.graph.nodes.result_interpreter.ResultInterpreterAgent") as MockAgent:
-            instance = AsyncMock()
-            instance.interpret = AsyncMock(return_value=mock_interp)
-            MockAgent.return_value = instance
-            updates = await interpret_result(state)
+    updates = await interpret_result(state)
 
-    assert updates["answer"] == "1 active resource found."
-    assert updates["highlights"] == ["Alice"]
-    assert updates["suggested_followups"] == ["Only show engineers", "Group by role"]
+    # Should be markdown table, not LLM summary
+    assert "Person0" in updates["answer"]
+    assert " | " in updates["answer"]  # Markdown table format
+    assert updates["highlights"] == []
+    assert "Show SQL" in updates["suggested_followups"]
 
 
 @pytest.mark.anyio

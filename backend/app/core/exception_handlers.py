@@ -6,13 +6,27 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.core.exceptions import AppError
+from app.core.exceptions import AppError, NotFoundError
 
 logger = logging.getLogger(__name__)
 
 
 def register_exception_handlers(app: FastAPI) -> None:
     """Register all exception handlers with sanitized output."""
+
+    @app.exception_handler(NotFoundError)
+    async def not_found_error_handler(request: Request, exc: NotFoundError) -> JSONResponse:
+        """Handle NotFoundError - generic message, log details server-side."""
+        logger.warning(
+            "NotFound: %s %s -> %s",
+            request.method,
+            request.url.path,
+            exc.message,
+        )
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Resource not found", "code": 404},
+        )
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:

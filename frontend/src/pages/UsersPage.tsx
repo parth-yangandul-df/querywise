@@ -166,6 +166,19 @@ function UserFormModal({
       employee_id: '',
       is_active: true,
     },
+    validate: {
+      email: (value) => (/^\S+@\S+$/.test(value) ? null : 'Invalid email'),
+      password: (value) => {
+        if (isEdit) return null;
+        if (value.length < 8) return 'Password must be at least 8 characters';
+        if (!/[A-Z]/.test(value)) return 'Password must contain an uppercase letter';
+        if (!/[a-z]/.test(value)) return 'Password must contain a lowercase letter';
+        if (!/[0-9]/.test(value)) return 'Password must contain a digit';
+        if (!/[!@#$%^&*()_+\-=\[\]{}|;':",./<>?]/.test(value)) return 'Password must contain a special character';
+        return null;
+      },
+      role: (value) => (value ? null : 'Role is required'),
+    },
   });
 
   useEffect(() => {
@@ -217,6 +230,14 @@ function UserFormModal({
       form.reset();
       onClose();
     },
+    onError: (err: any) => {
+      const msg = err?.response?.data?.detail || err?.message || 'Something went wrong';
+      notifications.show({
+        title: 'Error',
+        message: msg,
+        color: 'red',
+      });
+    },
   });
 
   const handleClose = () => {
@@ -243,6 +264,7 @@ function UserFormModal({
             required={!isEdit}
             type="password"
             placeholder={isEdit ? 'Leave blank to keep current' : undefined}
+            description="Min 8 chars, uppercase, lowercase, digit, special character"
             {...form.getInputProps('password')}
           />
           <Select

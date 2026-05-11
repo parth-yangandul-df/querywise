@@ -12,7 +12,6 @@ from app.llm.utils import repair_json
 @dataclass
 class InterpretationOutput:
     summary: str
-    highlights: list[str]
     suggested_followups: list[str]
 
 
@@ -47,7 +46,7 @@ class ResultInterpreterAgent:
     ) -> InterpretationOutput:
         """Convert raw query results into a human-readable answer."""
         # Build a preview of the results (limit to avoid huge prompts)
-        results_preview = _format_results_preview(columns, rows, max_rows=20)
+        results_preview = _format_results_preview(columns, rows, max_rows=5)
 
         user_prompt = USER_PROMPT_TEMPLATE.format(
             question=question,
@@ -70,13 +69,11 @@ class ResultInterpreterAgent:
             # Fallback: use the raw response as the summary
             parsed = {
                 "summary": response.content,
-                "highlights": [],
                 "suggested_followups": [],
             }
 
         return InterpretationOutput(
             summary=parsed.get("summary", response.content),
-            highlights=parsed.get("highlights", []),
             suggested_followups=parsed.get("suggested_followups", []),
         )
 

@@ -4,13 +4,14 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.api.v1.schemas.query import ExecuteSQLRequest, QueryRequest, SQLOnlyResponse
 from app.core.exceptions import AppError
+from app.core.limiter import limiter
 from app.db.models.user import User
 from app.db.session import get_db
 from app.services import query_service
@@ -26,7 +27,6 @@ _STREAM_STAGES = [
 ]
 # Fallback timeline used only when no real stage events are emitted (e.g. errors before first node)
 _STREAM_STAGE_TIMELINE_S = (0.0, 1.5, 3.0, 4.5)
-_STREAM_POLL_INTERVAL_S = 0.05
 
 
 def _json_default(value: object) -> str:
@@ -42,27 +42,29 @@ def _encode_stream_event(payload: dict) -> str:
 
 
 @router.post("")
+@limiter.limit("30/minute")
 async def execute_query(
+    request: Request,
     body: QueryRequest,
-    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Submit a natural language question and get SQL + results + interpretation."""
     result = await query_service.execute_nl_query(
-        db,
         body.connection_id,
         body.question,
         session_id=body.session_id,
         current_user=current_user,
         clear_context=body.clear_context,
+        skip_cache=body.skip_cache,
     )
     return result
 
 
 @router.post("/stream")
+@limiter.limit("30/minute")
 async def stream_query(
+    request: Request,
     body: QueryRequest,
-    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Stream real pipeline progress events followed by the final result.
@@ -79,30 +81,25 @@ async def stream_query(
 
         query_task = asyncio.create_task(
             query_service.execute_nl_query(
-                db,
                 body.connection_id,
                 body.question,
                 session_id=body.session_id,
                 current_user=current_user,
                 clear_context=body.clear_context,
                 event_queue=event_queue,
+                skip_cache=body.skip_cache,
             )
         )
 
         try:
-            while not query_task.done():
+            while not query_task.done() or not event_queue.empty():
                 try:
-                    event = event_queue.get_nowait()
+                    event = await asyncio.wait_for(event_queue.get(), timeout=0.5)
                     yield _encode_stream_event(event)
-                except asyncio.QueueEmpty:
-                    await asyncio.sleep(_STREAM_POLL_INTERVAL_S)
+                except asyncio.TimeoutError:
+                    continue
 
-            # Drain any remaining events pushed before task completed
-            while not event_queue.empty():
-                event = event_queue.get_nowait()
-                yield _encode_stream_event(event)
-
-            result = query_task.result()
+            result = await query_task
             yield _encode_stream_event({"type": "result", "data": result})
 
         except asyncio.CancelledError:
@@ -112,7 +109,7 @@ async def stream_query(
             logger.warning("Query error: %s (code=%s)", exc.message, exc.status_code)
             yield _encode_stream_event(exc.to_stream_event())
         except Exception:
-            logger.error("Query stream error: %s", exc_info=True)
+            logger.error("Query stream error", exc_info=True)
             yield _encode_stream_event(
                 {"type": "error", "message": "Something went wrong. Please try again.", "code": 500}
             )

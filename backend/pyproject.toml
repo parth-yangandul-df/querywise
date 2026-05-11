@@ -15,6 +15,7 @@ dependencies = [
     "httpx>=0.27",
     "sse-starlette>=2.0",
     "sqlparse>=0.5",
+    "sqlglot>=26.0",
     "cryptography>=43.0",
     "PyJWT>=2.8",
     "passlib[bcrypt]>=1.7",
@@ -25,6 +26,7 @@ dependencies = [
     "tenacity>=8.0",
     "prometheus-fastapi-instrumentator>=7.0",
     "slowapi>=0.1",
+    "redis>=5.0",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +36,7 @@ llm = [
     "langgraph>=0.2",
     "langchain-core>=0.3",
     "langsmith>=0.1",
+    "mlflow[langchain]>=3.9",
 ]
 sqlserver = [
     "aioodbc>=0.5",
@@ -57,6 +60,8 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B"]
+# B008: FastAPI's Depends() in function signatures is the canonical DI pattern
+ignore = ["B008"]
 
 [tool.ruff.lint.per-file-ignores]
 # graph.py contains an ASCII-art topology diagram in its module docstring

@@ -72,7 +72,7 @@ class QueryComposerAgent:
             }
 
         return ComposerOutput(
-            generated_sql=parsed.get("sql", ""),
+            generated_sql=parsed.get("sql", "").replace("\\n", "\n").replace("\\t", "\t"),
             explanation=parsed.get("explanation", ""),
             confidence=parsed.get("confidence", 0.5),
             tables_used=parsed.get("tables_used", []),

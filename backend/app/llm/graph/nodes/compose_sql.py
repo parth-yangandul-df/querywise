@@ -9,11 +9,14 @@ Short-circuits to write_history (with action=clarification) if:
 """
 
 import logging
+import re
+import time
 from typing import Any
 
+from app.core.metrics import record_llm_call, timed_node
 from app.llm.agents.query_composer import QueryComposerAgent
 from app.llm.graph.state import GraphState
-from app.llm.router import route
+from app.llm.router import QueryComplexity, route
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +26,52 @@ _SCOPE_VIOLATION_MSG = (
 )
 
 
+# Patterns that indicate the user is asking for unscoped / all data
+_UNSCOPED_QUERY_PATTERNS = [
+    r"\blist all\b",
+    r"\bshow all\b",
+    r"\ball \w+\b",
+    r"\bevery \w+\b",
+    r"\ball (?:clients|projects|resources|employees|users)\b",
+    r"\b(?:clients|projects|resources|employees|users) (?:list|overview|summary)\b",
+]
+
+
+def _is_unscoped_question(question: str) -> bool:
+    """Detect if the user is asking for ALL data rather than their own scoped data."""
+    q_lower = question.lower()
+    return any(re.search(p, q_lower) for p in _UNSCOPED_QUERY_PATTERNS)
+
+
+@timed_node("compose_sql")
 async def compose_sql(state: GraphState) -> dict[str, Any]:
     """Generate SQL from the resolved question using the LLM composer."""
     resolved_question = state.get("resolved_question") or state["question"]
     prompt_context = state.get("prompt_context") or ""
     resource_id = state.get("resource_id")
     employee_id = state.get("employee_id")
+
+    # Hard RBAC gate: scoped users asking for ALL data → immediate rejection.
+    # This prevents wasting LLM calls and error-handler retries on queries that
+    # are fundamentally outside the user's permission boundary.
+    if (resource_id is not None or employee_id is not None) and _is_unscoped_question(
+        resolved_question
+    ):
+        logger.warning(
+            "compose_sql: unscoped question for scoped user — "
+            "resource_id=%s employee_id=%s question=%r",
+            resource_id,
+            employee_id,
+            resolved_question[:60],
+        )
+        return {
+            "action": "clarification",
+            "clarification_reason": "scope_violation",
+            "clarification_message": _SCOPE_VIOLATION_MSG,
+            "clarification_options": [],
+            "error": _SCOPE_VIOLATION_MSG,
+            "generated_sql": None,
+        }
 
     if state.get("event_queue"):
         await state["event_queue"].put(
@@ -40,12 +83,32 @@ async def compose_sql(state: GraphState) -> dict[str, Any]:
             }
         )
 
-    provider, llm_config = route(resolved_question)
+    # If schema context has many tables, the query is NOT simple —
+    # force MODERATE complexity so we use the strong model (e.g., deepseek-v3.2)
+    # instead of the fast cheap model (gpt-4.1-nano) which hallucinates with
+    # large schema contexts.
+    schema_tables = state.get("schema_tables") or {}
+    complexity_override = None
+    if len(schema_tables) > 6:
+        complexity_override = QueryComplexity.MODERATE
+        logger.info(
+            "compose_sql: %d tables in schema context — forcing MODERATE complexity",
+            len(schema_tables),
+        )
+
+    provider, llm_config = route(resolved_question, complexity_override=complexity_override)
     composer = QueryComposerAgent(provider, llm_config)
+    llm_start = time.monotonic()
     composer_output = await composer.compose(
         resolved_question,
         prompt_context,
         conversation_history=state.get("loaded_history") or [],
+    )
+    record_llm_call(
+        "compose_sql",
+        provider.provider_type.value,
+        llm_config.model,
+        time.monotonic() - llm_start,
     )
     generated_sql = composer_output.generated_sql
 
