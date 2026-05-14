@@ -10,7 +10,11 @@ MAX_RETRIES matches the original llm_fallback behaviour (3 attempts).
 """
 
 import logging
+import re
 from typing import Any
+
+import sqlglot
+from sqlglot import exp
 
 from app.llm.agents.error_handler import ErrorHandlerAgent
 from app.llm.graph.state import GraphState
@@ -19,6 +23,73 @@ from app.llm.router import route_for_role
 logger = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3
+
+_DISTINCT_TOP_ODBC_ERROR = "incorrect syntax near the keyword 'distinct'"
+
+
+def _try_fix_distinct_top_error(sql: str, error: str) -> str | None:
+    """Convert SELECT DISTINCT to GROUP BY to fix SQL Server ODBC Driver 18 errors.
+
+    ODBC Driver 18 rejects 'SELECT DISTINCT TOP N col FROM t1 JOIN t2' even though
+    it is valid T-SQL. The correct fix is to replace SELECT DISTINCT with a GROUP BY
+    on all projected columns, which provides identical deduplication semantics.
+
+    Returns the corrected SQL string, or None if the pattern doesn't match.
+    """
+    if _DISTINCT_TOP_ODBC_ERROR not in error.lower():
+        return None
+
+    sql_upper = sql.upper()
+    if "DISTINCT" not in sql_upper:
+        return None
+
+    # Try sqlglot-based rewrite: strip DISTINCT and inject GROUP BY
+    try:
+        tree = sqlglot.parse_one(sql, read="tsql")
+        select_node = tree.find(exp.Select)
+        if select_node and select_node.args.get("distinct"):
+            # Remove DISTINCT flag
+            select_node.args["distinct"] = None
+
+            # Collect all projected column expressions for GROUP BY
+            # Skip aggregates (COUNT, SUM, etc.) — they must stay as-is
+            group_by_cols: list[exp.Expression] = []
+            for expr in select_node.expressions:
+                # Unwrap aliases: use the alias target, not the full aliased expression
+                col = expr.this if isinstance(expr, exp.Alias) else expr
+                # Skip window functions and aggregates
+                if not col.find(exp.AggFunc) and not col.find(exp.Window):
+                    group_by_cols.append(col.copy())
+
+            if group_by_cols and not tree.find(exp.Group):
+                tree.set("group", exp.Group(expressions=group_by_cols))
+
+            fixed = tree.sql(dialect="tsql")
+            logger.info(
+                "handle_error: converted SELECT DISTINCT → GROUP BY to fix ODBC error "
+                "(%d GROUP BY columns)",
+                len(group_by_cols),
+            )
+            return fixed
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("handle_error: sqlglot DISTINCT fix failed (%s), falling back to regex", exc)
+
+    # Regex fallback: strip DISTINCT (deduplication will be approximate)
+    match = re.search(
+        r"(SELECT\s+(?:TOP\s+\d+\s+)?)\s*DISTINCT\s+",
+        sql,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    prefix = match.group(1)
+    after_distinct = sql[match.end():]
+    fixed = f"{prefix}{after_distinct.lstrip()}"
+    logger.info(
+        "handle_error: regex-stripped DISTINCT from SQL (GROUP BY not injected — fallback path)",
+    )
+    return fixed
 
 
 async def handle_error(state: GraphState) -> dict[str, Any]:
@@ -69,6 +140,24 @@ async def handle_error(state: GraphState) -> dict[str, Any]:
             no_schema_context=True,
         )
 
+    # Fast path: try to auto-fix SQL Server ODBC DISTINCT/TOP error without LLM.
+    if execution_error:
+        fixed = _try_fix_distinct_top_error(generated_sql, execution_error)
+        if fixed:
+            logger.info(
+                "handle_error: auto-corrected DISTINCT/TOP error on attempt %d — retrying",
+                retry_count + 1,
+            )
+            return {
+                "generated_sql": fixed,
+                "sql": None,
+                "retry_count": retry_count + 1,
+                "previous_attempts": previous_attempts + [fixed],
+                "llm_provider": provider.provider_type.value,
+                "llm_model": llm_config.model,
+                "_target_node": "execute_sql",
+            }
+
     error_handler = ErrorHandlerAgent(provider, llm_config)
 
     error_source = execution_error or "; ".join(validation_issues)
@@ -82,7 +171,7 @@ async def handle_error(state: GraphState) -> dict[str, Any]:
         previous_attempts=previous_attempts,
     )
 
-    if not resolution.should_retry or not resolution.corrected_sql:
+    if not resolution.corrected_sql:
         return _exhausted(validation_issues, execution_error, retry_count, provider, llm_config)
 
     # Dedup fast-fail: if the model returned the same SQL, further retries will also fail.
@@ -93,6 +182,13 @@ async def handle_error(state: GraphState) -> dict[str, Any]:
             retry_count + 1,
         )
         return _exhausted(validation_issues, execution_error, retry_count, provider, llm_config)
+
+    # If the model says should_retry=False but gave us different SQL, still use it —
+    # the corrected SQL may be valid even if the agent thinks the fix is uncertain.
+    if not resolution.should_retry:
+        logger.info(
+            "handle_error: should_retry=False but corrected_sql is different — using it once",
+        )
 
     new_retry_count = retry_count + 1
     logger.info(
@@ -105,6 +201,7 @@ async def handle_error(state: GraphState) -> dict[str, Any]:
     target_node = "execute_sql" if execution_error else "validate_sql"
     return {
         "generated_sql": resolution.corrected_sql,
+        "sql": None,
         "retry_count": new_retry_count,
         "previous_attempts": previous_attempts + [resolution.corrected_sql],
         "llm_provider": provider.provider_type.value,
@@ -154,6 +251,7 @@ def _exhausted(
         "error": f"SQL generation failed after {retry_count} retries",
         "llm_provider": provider.provider_type.value,
         "llm_model": llm_config.model,
+        "_target_node": None,
     }
 
 

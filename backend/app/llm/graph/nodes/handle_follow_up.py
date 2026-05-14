@@ -14,6 +14,7 @@ from typing import Any
 from app.llm.base_provider import LLMMessage
 from app.llm.graph.state import GraphState
 from app.llm.router import route_for_role
+from app.llm.stream_stages import ANSWERING, emit
 from app.llm.utils import repair_json
 
 logger = logging.getLogger(__name__)
@@ -127,25 +128,32 @@ def _validate_sql_against_schema(sql: str, schema_tables: dict) -> tuple[bool, s
     if added_tables:
         return False, f"new tables required: {', '.join(sorted(added_tables))}"
 
-    # 2. Column check — extract bracketed and bare column references
-    col_pattern = re.compile(
-        r"(?:\w+\.)?\[(\w+)\]|(?<!\.)\b(\w+)\b",
-        re.IGNORECASE,
-    )
+    # 2. Column check — only validate table-qualified references (alias.column).
+    # Bare column names may be aliases, so we can't reject them without a full parser.
+    # Table-qualified refs (e.g. r.Knowledge) can NEVER be aliases — unknown ones are
+    # hallucinations.
     all_known_cols: set[str] = set()
     for cols in schema_tables.values():
         all_known_cols.update(c.lower() for c in cols)
 
-    for m in col_pattern.finditer(sql):
-        col = (m.group(1) or m.group(2)).lower()
+    # Check table-qualified column references (alias.column) — these can never be
+    # aliases themselves, so any unknown ones are almost certainly hallucinations.
+    qualified_col_pattern = re.compile(r"\b\w+\.(\w+)\b", re.IGNORECASE)
+    hallucinated_cols: set[str] = set()
+    for m in qualified_col_pattern.finditer(sql):
+        col = m.group(1).lower()
         if col in _SQL_KEYWORDS or col.isdigit():
             continue
-        # Allow aggregate functions, aliases (we can't parse perfectly)
-        # Just check if the column exists anywhere in the known schema
         if col not in all_known_cols:
-            # It might be an alias or expression — don't hard-reject,
-            # but log a warning. We can't be 100% sure without a parser.
-            pass  # lenient: allow unknown columns (caught at execution)
+            hallucinated_cols.add(col)
+
+    if hallucinated_cols:
+        logger.warning(
+            "_validate_sql_against_schema: table-qualified columns not found in schema "
+            "(likely hallucinations): %s",
+            sorted(hallucinated_cols),
+        )
+        return False, f"unknown qualified columns: {', '.join(sorted(hallucinated_cols))}"
 
     return True, ""
 
@@ -206,6 +214,15 @@ async def _rewrite_sql(state: GraphState) -> str | None:
         # - New tables needed (e.g., BusinessUnit for "vResourcing")
         # - Column hallucinations (e.g., IsBillable on Project)
         cached_schema = lqc.get("schema_tables") or {}
+        if not cached_schema:
+            # No schema available (e.g., prior query was a similarity shortcut that
+            # never ran build_context). Without schema grounding the rewrite model
+            # will hallucinate columns. Escalate to full compose instead.
+            logger.warning(
+                "handle_follow_up: rewrite_sql skipped — no cached schema in last_query_context "
+                "(prior query may have been a shortcut hit). Escalating to full compose."
+            )
+            return None
         is_valid, reason = _validate_sql_against_schema(new_sql, cached_schema)
         if not is_valid:
             logger.warning(
@@ -250,14 +267,7 @@ async def handle_follow_up(state: GraphState) -> dict[str, Any]:
             }
 
         if state.get("event_queue"):
-            await state.get("event_queue").put(
-                {
-                    "type": "stage",
-                    "stage": "answering",
-                    "label": "Answering from previous result...",
-                    "progress": 90,
-                }
-            )
+            await state.get("event_queue").put(emit(ANSWERING))
 
         return {
             "answer": last_answer,

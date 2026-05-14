@@ -15,6 +15,7 @@ from typing import Any
 from app.connectors.connector_registry import get_or_create_connector
 from app.core.metrics import timed_node
 from app.llm.graph.state import GraphState
+from app.llm.stream_stages import RUNNING_QUERY, emit
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +33,16 @@ def _format_result_as_table(
         return "No results found."
 
     # Truncate long values so the table doesn't become a wall of text
-    MAX_CELL_LEN = 28
-    MAX_COLS = 12  # Show at most 12 columns; very wide tables are unreadable
+    max_cell_len = 28
+    max_cols = 12  # Show at most 12 columns; very wide tables are unreadable
 
-    display_cols = columns[:MAX_COLS]
+    display_cols = columns[:max_cols]
     col_indices = list(range(len(display_cols)))
-    truncated = len(columns) > MAX_COLS
+    truncated = len(columns) > max_cols
 
     def _fmt(val: Any) -> str:
         s = "NULL" if val is None else str(val)
-        return s if len(s) <= MAX_CELL_LEN else s[:MAX_CELL_LEN - 1] + "…"
+        return s if len(s) <= max_cell_len else s[:max_cell_len - 1] + "…"
 
     # Build rows of formatted strings
     formatted_rows = []
@@ -61,7 +62,15 @@ def _format_result_as_table(
     header = "| " + " | ".join(_pad(display_cols[i], widths[i]) for i in col_indices) + " |"
     sep = "|" + "|".join("-" * (widths[i] + 2) for i in col_indices) + "|"
 
-    lines = [f"**{row_count} rows**" + (" — showing first " + str(min(max_display, row_count)) if row_count > max_display else ""), ""]
+    lines = [
+        f"**{row_count} rows**"
+        + (
+            f" — showing first {min(max_display, row_count)}"
+            if row_count > max_display
+            else ""
+        ),
+        "",
+    ]
     lines.append(header)
     lines.append(sep)
     for row in formatted_rows:
@@ -71,7 +80,10 @@ def _format_result_as_table(
         lines.append(f"\n… and {row_count - max_display} more rows")
 
     if truncated:
-        lines.append(f'\n_(Showing {MAX_COLS} of {len(columns)} columns — ask "show all columns" to see the full table)_')
+        lines.append(
+            f"\n_(Showing {max_cols} of {len(columns)} columns — "
+            f'ask "show all columns" to see the full table)_'
+        )
 
     return "\n".join(lines)
 
@@ -86,13 +98,11 @@ def _format_single_value(rows: list[list]) -> str | None:
 @timed_node("execute_sql")
 async def execute_sql(state: GraphState) -> dict[str, Any]:
     """Execute SQL and format the answer directly — no separate interpret node."""
-    sql_to_run = state.get("sql") or state.get("generated_sql") or ""
+    sql_to_run = state.get("generated_sql") or state.get("sql") or ""
     generated_sql = state.get("generated_sql") or sql_to_run
 
     if state.get("event_queue"):
-        await state.get("event_queue").put(
-            {"type": "stage", "stage": "running_query", "label": "Running query...", "progress": 75}
-        )
+        await state.get("event_queue").put(emit(RUNNING_QUERY))
 
     connector = await get_or_create_connector(
         state["connection_id"],

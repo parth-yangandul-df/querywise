@@ -19,6 +19,7 @@ from sqlalchemy import desc, select
 from app.core.metrics import timed_node
 from app.db.models.query_history import QueryExecution
 from app.llm.graph.state import GraphState
+from app.llm.stream_stages import UNDERSTANDING, emit
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +36,7 @@ async def load_history(state: GraphState) -> dict[str, Any]:
 
     event_queue = state.get("event_queue")
     if event_queue is not None:
-        await event_queue.put(
-            {
-                "type": "stage",
-                "stage": "understanding",
-                "label": "Understanding your question...",
-                "progress": 10,
-            }
-        )
+        await event_queue.put(emit(UNDERSTANDING))
 
     db_factory = state["db"]
     try:

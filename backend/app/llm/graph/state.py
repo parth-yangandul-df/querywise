@@ -61,6 +61,7 @@ class GraphState(TypedDict):
     validation_issues: list[str]  # empty = valid; non-empty = re-route to handle_error
     previous_attempts: list[str]  # all SQL strings tried in this turn
     retry_count: int
+    compose_retry_count: int  # counts empty-SQL retries before giving up
 
     # ── Execution (set by execute_sql node) ───────────────────────────────
     sql: str | None

@@ -21,6 +21,7 @@ from app.config import settings
 from app.core.metrics import timed_node
 from app.llm.base_provider import LLMMessage
 from app.llm.graph.state import GraphState
+from app.llm.stream_stages import UNDERSTANDING, emit
 from app.llm.utils import repair_json
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,11 @@ _SCHEMA_INTROSPECTION_PATTERNS = [
     r"\bwhat can i query\b",
     r"\bwhat data (is|do you have)\b",
 ]
+
+_STOP_WORDS = frozenset({
+    "who", "what", "which", "how", "list", "show", "get",
+    "the", "a", "in", "for", "and", "or", "all",
+})
 
 
 def _is_schema_introspection(question: str) -> bool:
@@ -196,26 +202,7 @@ async def resolve_turn(state: GraphState) -> dict[str, Any]:
         }
 
     if state.get("event_queue"):
-        await state.get("event_queue").put(
-            {
-                "type": "stage",
-                "stage": "understanding",
-                "label": "Understanding your question...",
-                "progress": 20,
-            }
-        )
-
-    # Fast-path: schema introspection questions don't need an LLM call.
-    # Route directly to show_schema for a cached schema lookup.
-    if _is_schema_introspection(state["question"]):
-        logger.info("resolve_turn: schema introspection detected — routing to show_schema")
-        return {
-            "action": "show_schema",
-            "resolved_question": state["question"],
-            "clarification_reason": None,
-            "clarification_message": None,
-            "clarification_options": [],
-        }
+        await state.get("event_queue").put(emit(UNDERSTANDING))
 
     history_text = _format_history(history)
     last_sql = state.get("last_generated_sql") or "None"
@@ -330,7 +317,7 @@ async def resolve_turn(state: GraphState) -> dict[str, Any]:
                 combined_patterns = [
                     rf"\b{re.escape(word)}\b.*\b(sql|skill|bench|resource)\b"
                     for word in last_q_lower.split()
-                    if len(word) > 3 and word not in {"who", "what", "which", "how", "list", "show", "get", "the", "a", "in", "for", "and", "or", "all"}
+                    if len(word) > 3 and word not in _STOP_WORDS
                 ]
                 matched_any = any(
                     re.search(p, q_lower) for p in combined_patterns

@@ -21,6 +21,7 @@ from app.core.metrics import timed_node
 from app.db.models.schema_cache import CachedTable
 from app.db.session import AsyncSession
 from app.llm.graph.state import GraphState
+from app.llm.stream_stages import BUILDING_CONTEXT, emit
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +34,7 @@ async def show_schema(state: GraphState) -> dict[str, Any]:
     db_factory = state["db"]
 
     if state.get("event_queue"):
-        await state["event_queue"].put(
-            {
-                "type": "stage",
-                "stage": "answering",
-                "label": "Looking up schema...",
-                "progress": 50,
-            }
-        )
+        await state["event_queue"].put(emit(BUILDING_CONTEXT))
 
     async with db_factory() as db:
         tables = await _get_cached_tables(db, connection_id)

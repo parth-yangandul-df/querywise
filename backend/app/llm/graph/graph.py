@@ -143,7 +143,8 @@ def _build_graph(checkpointer: Any | None = None) -> Any:
         route_after_compose,
         {
             "validate_sql": "validate_sql",
-            "write_history": "write_history",  # scope violation / no SQL produced
+            "compose_sql": "compose_sql",   # retry: LLM returned empty SQL
+            "write_history": "write_history",  # scope violation / no SQL after retries
         },
     )
 

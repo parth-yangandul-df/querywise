@@ -5,7 +5,7 @@ and calls the LLM composer to produce SQL for the resolved question.
 
 Short-circuits to write_history (with action=clarification) if:
   - The LLM signals a scope violation (returns SCOPE_VIOLATION sentinel)
-  - The LLM returns no SQL at all
+  - The LLM returns no SQL at all AND compose_retry_count >= _MAX_COMPOSE_RETRIES
 """
 
 import logging
@@ -17,8 +17,11 @@ from app.core.metrics import record_llm_call, timed_node
 from app.llm.agents.query_composer import QueryComposerAgent
 from app.llm.graph.state import GraphState
 from app.llm.router import QueryComplexity, route
+from app.llm.stream_stages import GENERATING_SQL, emit
 
 logger = logging.getLogger(__name__)
+
+_MAX_COMPOSE_RETRIES = 2  # up to 3 total attempts (0, 1, 2)
 
 _SCOPE_VIOLATION_MSG = (
     "This query is not permitted. As a standard user you can only access your own data. "
@@ -51,11 +54,22 @@ async def compose_sql(state: GraphState) -> dict[str, Any]:
     resource_id = state.get("resource_id")
     employee_id = state.get("employee_id")
 
-    # Hard RBAC gate: scoped users asking for ALL data → immediate rejection.
-    # This prevents wasting LLM calls and error-handler retries on queries that
-    # are fundamentally outside the user's permission boundary.
-    if (resource_id is not None or employee_id is not None) and _is_unscoped_question(
-        resolved_question
+    hint_sql = state.get("similarity_hint_sql")
+    if hint_sql:
+        hint_block = (
+            f"\n\nNOTE: A similar validated query exists:\n{hint_sql}\n"
+            "Use this as a reference but adjust the filters to match the question exactly."
+        )
+        prompt_context = prompt_context + hint_block
+        logger.info("compose_sql: injected similarity hint SQL (%d chars)", len(hint_sql))
+
+    # Hard RBAC gate: 'user' role asking for ALL data → immediate rejection.
+    # admin and manager bypass scope constraints entirely.
+    user_role = state.get("user_role")
+    if (
+        user_role == "user"
+        and (resource_id is not None or employee_id is not None)
+        and _is_unscoped_question(resolved_question)
     ):
         logger.warning(
             "compose_sql: unscoped question for scoped user — "
@@ -74,14 +88,7 @@ async def compose_sql(state: GraphState) -> dict[str, Any]:
         }
 
     if state.get("event_queue"):
-        await state["event_queue"].put(
-            {
-                "type": "stage",
-                "stage": "generating_sql",
-                "label": "Generating SQL...",
-                "progress": 55,
-            }
-        )
+        await state["event_queue"].put(emit(GENERATING_SQL))
 
     # If schema context has many tables, the query is NOT simple —
     # force MODERATE complexity so we use the strong model (e.g., deepseek-v3.2)
@@ -114,7 +121,8 @@ async def compose_sql(state: GraphState) -> dict[str, Any]:
 
     # LLM signalled it cannot scope the query for this user
     if (
-        (resource_id is not None or employee_id is not None)
+        user_role == "user"
+        and (resource_id is not None or employee_id is not None)
         and generated_sql
         and "SCOPE_VIOLATION" in generated_sql.upper()
     ):
@@ -130,6 +138,28 @@ async def compose_sql(state: GraphState) -> dict[str, Any]:
         }
 
     if not generated_sql:
+        compose_retry_count = state.get("compose_retry_count", 0)
+        logger.warning(
+            "compose_sql: LLM returned empty SQL — provider=%s model=%s "
+            "explanation=%r confidence=%.2f tables_used=%s assumptions=%s "
+            "compose_retry_count=%d",
+            provider.provider_type.value,
+            llm_config.model,
+            composer_output.explanation[:200] if composer_output.explanation else None,
+            composer_output.confidence,
+            composer_output.tables_used,
+            composer_output.assumptions,
+            compose_retry_count,
+        )
+        if compose_retry_count < _MAX_COMPOSE_RETRIES:
+            # Retry: increment counter and loop back to compose_sql
+            return {
+                "compose_retry_count": compose_retry_count + 1,
+                "action": "no_sql_retry",
+                "llm_provider": provider.provider_type.value,
+                "llm_model": llm_config.model,
+            }
+        # Exhausted retries — give up and ask user to rephrase
         return {
             "action": "clarification",
             "clarification_reason": "no_sql_generated",
@@ -161,7 +191,10 @@ async def compose_sql(state: GraphState) -> dict[str, Any]:
 
 
 def route_after_compose(state: GraphState) -> str:
-    """Route to validate_sql, or short-circuit to write_history on scope/no-SQL."""
-    if state.get("action") == "clarification":
+    """Route to validate_sql, compose_sql (retry), or write_history on scope/no-SQL."""
+    action = state.get("action")
+    if action == "no_sql_retry":
+        return "compose_sql"
+    if action == "clarification":
         return "write_history"
     return "validate_sql"

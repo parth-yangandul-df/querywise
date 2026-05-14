@@ -10,6 +10,7 @@ from typing import Any
 from app.llm.base_provider import LLMMessage
 from app.llm.graph.state import GraphState
 from app.llm.router import route_for_role
+from app.llm.stream_stages import INTERPRETING, emit
 
 logger = logging.getLogger(__name__)
 
@@ -55,18 +56,11 @@ async def _handle_explain_result(state: GraphState) -> dict[str, Any]:
                 "I don't have a previous result to explain. Try running a query first."
             ),
             "clarification_options": [],
-            "action": "clarification",
+"action": "clarification",
         }
 
     if state.get("event_queue"):
-        await state["event_queue"].put(
-            {
-                "type": "stage",
-                "stage": "interpreting",
-                "label": "Interpreting results...",
-                "progress": 80,
-            }
-        )
+        await state.get("event_queue").put(emit(INTERPRETING))
 
     # Format a compact preview table
     preview_text = _format_preview(columns, preview_rows)

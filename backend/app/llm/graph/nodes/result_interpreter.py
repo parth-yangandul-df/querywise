@@ -3,9 +3,10 @@
 import logging
 from typing import Any
 
-from app.llm.agents.result_interpreter import format_single_value_result
 from app.core.metrics import timed_node
+from app.llm.agents.result_interpreter import format_single_value_result
 from app.llm.graph.state import GraphState
+from app.llm.stream_stages import INTERPRETING, emit
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +24,7 @@ async def interpret_result(state: GraphState) -> dict[str, Any]:
 
     if not result.rows:
         if state.get("event_queue"):
-            await state.get("event_queue").put(
-                {
-                    "type": "stage",
-                    "stage": "interpreting",
-                    "label": "Preparing response...",
-                    "progress": 90,
-                }
-            )
+            await state.get("event_queue").put(emit(INTERPRETING))
         return {
             "answer": "No matching rows found.",
             "highlights": [],
@@ -54,14 +48,7 @@ async def interpret_result(state: GraphState) -> dict[str, Any]:
     # Format results as a markdown table directly — eliminates 5-6s of LLM latency
     # and avoids the quality/consistency issues of model-generated summaries.
     if state.get("event_queue"):
-        await state.get("event_queue").put(
-            {
-                "type": "stage",
-                "stage": "interpreting",
-                "label": "Formatting results...",
-                "progress": 90,
-            }
-        )
+        await state.get("event_queue").put(emit(INTERPRETING))
     formatted = _format_result_as_table(result.columns, result.rows, result.row_count)
     return {
         "answer": formatted,
@@ -113,12 +100,12 @@ def _generate_followups_for_small_result(columns: list[str], rows: list[list]) -
     # If result has date columns, suggest date range filter
     date_cols = [c for c in col_lower if any(d in c for d in ["date", "time", "year", "month"])]
     if date_cols:
-        followups.append(f"Filter by date range")
+        followups.append("Filter by date range")
 
     # If result has status/active columns, suggest status filter
     status_cols = [c for c in col_lower if any(s in c for s in ["status", "active", "state"])]
     if status_cols:
-        followups.append(f"Filter by status")
+        followups.append("Filter by status")
 
     # If multiple rows, suggest sorting
     if len(rows) > 1:

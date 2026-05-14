@@ -81,7 +81,9 @@ async def similarity_check(state: GraphState) -> dict[str, Any]:
         logger.info("similarity_check: skipped - no embedding")
         return {"similarity_shortcut": False}
 
-    if state.get("resource_id") is not None or state.get("employee_id") is not None:
+    if state.get("user_role") == "user" and (
+        state.get("resource_id") is not None or state.get("employee_id") is not None
+    ):
         logger.info("similarity_check: skipped - scope constraints active")
         return {"similarity_shortcut": False}
 
@@ -130,19 +132,27 @@ async def similarity_check(state: GraphState) -> dict[str, Any]:
 
                 if entity:
                     if not sql_has_filter:
-                        # Generic unfiltered SQL cannot answer a specific-entity question
                         logger.info(
-                            "similarity_check: entity guard - question asks for %r but stored SQL is unfiltered; falling through to compose_sql",
+                            "similarity_check: entity guard - question asks for %r "
+                            "but stored SQL is unfiltered; "
+                            "falling through to compose_sql with matched SQL as hint",
                             entity,
                         )
-                        return {"similarity_shortcut": False}
+                        return {
+                            "similarity_shortcut": False,
+                            "similarity_hint_sql": sql,
+                        }
                     if entity.lower() not in sql.lower():
-                        # SQL filters on a different entity
                         logger.info(
-                            "similarity_check: entity guard - question asks for %r but stored SQL filters on different entity; falling through to compose_sql",
+                            "similarity_check: entity guard - question asks for %r "
+                            "but stored SQL filters on different entity; "
+                            "falling through to compose_sql with matched SQL as hint",
                             entity,
                         )
-                        return {"similarity_shortcut": False}
+                        return {
+                            "similarity_shortcut": False,
+                            "similarity_hint_sql": sql,
+                        }
 
                 logger.info(
                     "similarity_check: shortcut matched q=%r similarity=%.4f sql=%r",

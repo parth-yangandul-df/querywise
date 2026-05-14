@@ -16,6 +16,7 @@ from typing import Any
 
 from app.core.metrics import timed_node
 from app.llm.graph.state import GraphState
+from app.llm.stream_stages import BUILDING_CONTEXT, emit
 from app.semantic.context_builder import build_context
 
 logger = logging.getLogger(__name__)
@@ -71,14 +72,7 @@ async def build_context_node(state: GraphState) -> dict[str, Any]:
     employee_id = state.get("employee_id")
 
     if state.get("event_queue"):
-        await state["event_queue"].put(
-            {
-                "type": "stage",
-                "stage": "building_context",
-                "label": "Building context...",
-                "progress": 30,
-            }
-        )
+        await state["event_queue"].put(emit(BUILDING_CONTEXT))
 
     # connector_type is already in state — no extra DB round-trip needed
     async with db_factory() as db:
@@ -98,14 +92,20 @@ async def build_context_node(state: GraphState) -> dict[str, Any]:
                 len(context.sample_queries),
             )
 
-        # Inject scope constraints for 'user' role
+        # Inject scope constraints only for 'user' role.
+        # admin has no constraints at all; manager has resource_id/employee_id set
+        # for identification purposes but is NOT subject to personal-data scope limits.
         prompt_context = context.prompt_context
-        if resource_id is not None:
-            prompt_context = _SCOPE_CONSTRAINT_TEMPLATE.format(resource_id=resource_id) + prompt_context
-        if employee_id is not None:
-            prompt_context = (
-                _EMPLOYEE_ID_SCOPE_TEMPLATE.format(employee_id=employee_id) + prompt_context
-            )
+        user_role = state.get("user_role")
+        if user_role == "user":
+            if resource_id is not None:
+                prompt_context = (
+                    _SCOPE_CONSTRAINT_TEMPLATE.format(resource_id=resource_id) + prompt_context
+                )
+            if employee_id is not None:
+                prompt_context = (
+                    _EMPLOYEE_ID_SCOPE_TEMPLATE.format(employee_id=employee_id) + prompt_context
+                )
 
         schema_tables = {
             lt.table.table_name.upper(): [c.column_name.upper() for c in lt.columns]
