@@ -13,6 +13,9 @@ import re
 import time
 from typing import Any
 
+import sqlglot
+from sqlglot import exp
+
 from app.core.metrics import record_llm_call, timed_node
 from app.llm.agents.query_composer import QueryComposerAgent
 from app.llm.graph.state import GraphState
@@ -22,6 +25,7 @@ from app.llm.stream_stages import GENERATING_SQL, emit
 logger = logging.getLogger(__name__)
 
 _MAX_COMPOSE_RETRIES = 2  # up to 3 total attempts (0, 1, 2)
+_MAX_TOTAL_ATTEMPTS = 3  # Hard limit across all retry types (compose + error handler)
 
 _SCOPE_VIOLATION_MSG = (
     "This query is not permitted. As a standard user you can only access your own data. "
@@ -53,6 +57,33 @@ async def compose_sql(state: GraphState) -> dict[str, Any]:
     prompt_context = state.get("prompt_context") or ""
     resource_id = state.get("resource_id")
     employee_id = state.get("employee_id")
+
+    # HARD LIMIT: Stop infinite loops from truncated responses / flip-flopping corrections
+    # Use retry_count (monotonically increasing across handle_error cycles) + compose_retry_count
+    # Don't use len(previous_attempts) — it gets overwritten on success
+    retry_count = state.get("retry_count", 0)
+    compose_retry_count = state.get("compose_retry_count", 0)
+    total_attempts = retry_count + compose_retry_count
+    if total_attempts >= _MAX_TOTAL_ATTEMPTS:
+        prev = state.get("previous_attempts", [])
+        logger.error(
+            "compose_sql: HARD LIMIT EXCEEDED — %d attempts (retry=%d compose_retry=%d), giving up. "
+            "Last SQL: %r",
+            total_attempts,
+            retry_count,
+            compose_retry_count,
+            prev[-1][:100] if prev else None,
+        )
+        return {
+            "action": "clarification",
+            "clarification_reason": "too_many_attempts",
+            "clarification_message": (
+                "I'm having trouble generating a valid query for this question. "
+                "Could you try rephrasing it, or ask about something simpler?"
+            ),
+            "clarification_options": ["Rephrase question", "Try a different question"],
+            "error": f"Exceeded maximum attempts ({_MAX_TOTAL_ATTEMPTS})",
+        }
 
     hint_sql = state.get("similarity_hint_sql")
     if hint_sql:
@@ -156,6 +187,7 @@ async def compose_sql(state: GraphState) -> dict[str, Any]:
             return {
                 "compose_retry_count": compose_retry_count + 1,
                 "action": "no_sql_retry",
+                "generated_sql": None,  # Clear stale SQL from state
                 "llm_provider": provider.provider_type.value,
                 "llm_model": llm_config.model,
             }
@@ -172,6 +204,18 @@ async def compose_sql(state: GraphState) -> dict[str, Any]:
             "llm_model": llm_config.model,
         }
 
+    # FIX #3: Hallucination check - log only, let validation+rebuild handle real issues
+    # Pre-check caused infinite loops when columns were from pruned tables (not in schema_tables)
+    schema_tables = state.get("schema_tables") or {}
+    hallucinated = _detect_hallucinated_columns(generated_sql, schema_tables)
+    if hallucinated:
+        logger.warning(
+            "compose_sql: potential hallucination detected - columns=%r not in current schema context. "
+            "Letting validation handle (may trigger context rebuild if needed).",
+            hallucinated,
+        )
+        # Don't retry here - validation will catch real errors and rebuild_context will fetch missing tables
+
     logger.info(
         "compose_sql: generated sql=%r provider=%s model=%s",
         generated_sql[:200],
@@ -182,12 +226,45 @@ async def compose_sql(state: GraphState) -> dict[str, Any]:
 
     return {
         "generated_sql": generated_sql,
+        "action": "query",  # CRITICAL: must override stale "no_sql_retry" from previous attempt
         "explanation": composer_output.explanation,
         "llm_provider": provider.provider_type.value,
         "llm_model": llm_config.model,
-        "previous_attempts": [generated_sql],
-        "retry_count": 0,
+        "previous_attempts": state.get("previous_attempts", []) + [generated_sql],  # Append, don't overwrite
+        "retry_count": state.get("retry_count", 0),  # Preserve, don't reset
+        "validation_issues": [],  # Clear stale issues from previous cycle
+        "needs_context_rebuild": False,  # Clear stale rebuild flag
+        "force_include_tables": [],  # Clear stale forced tables
     }
+
+
+def _detect_hallucinated_columns(sql: str, schema_tables: dict[str, list[str]]) -> list[str]:
+    """Detect columns in SQL that don't exist in the provided schema.
+
+    Uses sqlglot to parse SQL and extract column references, then checks
+    against the schema_tables dict. Returns list of hallucinated column names.
+    """
+    if not sql or not schema_tables:
+        return []
+
+    # Build set of all valid columns (case-insensitive)
+    valid_columns: set[str] = set()
+    for cols in schema_tables.values():
+        valid_columns.update(c.upper() for c in cols)
+
+    hallucinated: list[str] = []
+
+    try:
+        parsed = sqlglot.parse_one(sql, read="tsql")
+        for column in parsed.find_all(exp.Column):
+            col_name = column.name.upper()
+            if col_name not in valid_columns:
+                hallucinated.append(column.name)
+    except Exception:
+        # Parse error - let validation handle it
+        pass
+
+    return hallucinated
 
 
 def route_after_compose(state: GraphState) -> str:
@@ -197,4 +274,5 @@ def route_after_compose(state: GraphState) -> str:
         return "compose_sql"
     if action == "clarification":
         return "write_history"
+    # Route to validation (self-critique removed - validation + pre-check sufficient)
     return "validate_sql"

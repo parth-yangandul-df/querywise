@@ -55,10 +55,14 @@ class GraphState(TypedDict):
 
     # ── Similarity shortcut (set by similarity_check node) ────────────────
     similarity_shortcut: bool  # True if a validated sample query matched
+    similarity_hint_sql: str | None  # FIX #1: SQL from similar query, used as hint to composer
 
     # ── SQL generation pipeline (compose → validate → handle_error cycle) ─
     generated_sql: str | None
     validation_issues: list[str]  # empty = valid; non-empty = re-route to handle_error
+    # FIX #2: Context rebuild for schema mismatches
+    needs_context_rebuild: bool  # True when validation detected missing tables
+    force_include_tables: list[str]  # Tables to force-include in context rebuild
     previous_attempts: list[str]  # all SQL strings tried in this turn
     retry_count: int
     compose_retry_count: int  # counts empty-SQL retries before giving up

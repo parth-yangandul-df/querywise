@@ -61,8 +61,59 @@ class QueryComposerAgent:
 
         response = await self.provider.complete(messages, self.config)
 
+        # Track token usage and cost in MLflow (OpenRouter models like
+        # deepseek/qwen aren't in litellm's pricing catalog, so we use
+        # the actual cost from OpenRouter's usage.cost response field).
+        from app.core.mlflow_tracing import set_mlflow_llm_cost
+
+        set_mlflow_llm_cost(
+            model=response.model,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            cost_usd=response.cost_usd,
+            provider=self.provider.provider_type.value,
+        )
+
         # Parse JSON response (repair handles common Ollama/local model issues)
         raw_content = response.content
+
+        # Strip chain-of-thought reasoning tags (used by qwen3, deepseek-r1, etc.)
+        # These consume output tokens and can cause truncation before SQL is generated.
+        # The actual SQL is always AFTER the </think> tag.
+        if raw_content and "<think>" in raw_content:
+            think_end = raw_content.find("</think>")
+            if think_end != -1:
+                raw_content = raw_content[think_end + len("</think>"):].strip()
+            else:
+                # Unclosed <think> tag — response was truncated during reasoning
+                logger.error(
+                    "compose: LLM response truncated during reasoning (unclosed <think> tag) — "
+                    "model spent all output tokens on chain-of-thought. Asking user to simplify."
+                )
+                return ComposerOutput(
+                    generated_sql="",
+                    explanation="Model spent output budget on reasoning. Please simplify.",
+                    confidence=0.0,
+                    tables_used=[],
+                    assumptions=[],
+                )
+
+        # Detect truncated responses (mid-reasoning) — fail fast instead of infinite retry
+        if response.finish_reason == "length" or raw_content.rstrip().endswith(("{\n", '"explanation"', '"sql"')):
+            logger.error(
+                "compose: LLM response TRUNCATED (finish_reason=%s, ends_with=%r) — "
+                "model output limit reached. Asking user to simplify.",
+                response.finish_reason,
+                raw_content[-50:] if raw_content else None,
+            )
+            return ComposerOutput(
+                generated_sql="",  # Empty triggers clarification
+                explanation="Query too complex for current model token limits. Please simplify.",
+                confidence=0.0,
+                tables_used=[],
+                assumptions=[],
+            )
+
         try:
             parsed = json.loads(repair_json(raw_content))
         except json.JSONDecodeError:
@@ -90,10 +141,10 @@ class QueryComposerAgent:
 
         return ComposerOutput(
             generated_sql=sql_value,
-            explanation=parsed.get("explanation", ""),
-            confidence=float(parsed.get("confidence", 0.5)),
-            tables_used=parsed.get("tables_used", []),
-            assumptions=parsed.get("assumptions", []),
+            explanation="",  # Removed to save tokens - not needed
+            confidence=1.0 if sql_value else 0.0,  # Binary: have SQL or don't
+            tables_used=[],  # Removed to save tokens
+            assumptions=[],  # Removed to save tokens
         )
 
 

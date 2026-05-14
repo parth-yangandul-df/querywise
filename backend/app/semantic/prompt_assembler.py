@@ -283,6 +283,17 @@ def assemble_prompt(
             "JOIN PA_Skills s ON s.SkillId = rs.SkillId WHERE s.SkillName LIKE '%Python%'. "
             "Never use COUNT(*) directly on a multi-table JOIN without deduplication."
         )
+        constraint_lines.append(
+            "- ACTIVE ASSIGNMENT FILTER (MANDATORY): Whenever the ProjectResource table "
+            "(alias pr) is JOINed, you MUST add: "
+            "GETDATE() BETWEEN pr.StartDate AND ISNULL(pr.EndDate, '9999-12-31'). "
+            "This filters to currently active assignments only. "
+            "Never use pr.EndDate > GETDATE() alone — it misses open-ended assignments "
+            "where EndDate IS NULL. Always use ISNULL(pr.EndDate, '9999-12-31'). "
+            "This applies to ANY query involving resources on projects — "
+            "list, count, skills, allocations — unless the user explicitly asks for "
+            "past or all assignments."
+        )
         if inferred_relationships:
             constraint_lines.append(
                 "- JOIN RULES: Always use the join paths listed in INFERRED RELATIONSHIPS above. "

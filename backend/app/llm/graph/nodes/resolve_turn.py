@@ -230,6 +230,18 @@ async def resolve_turn(state: GraphState) -> dict[str, Any]:
 
         provider, config = route_for_role(state["question"], role="resolver")
         response = await provider.complete(messages, config)
+
+        # Track token usage and cost in MLflow
+        from app.core.mlflow_tracing import set_mlflow_llm_cost
+
+        set_mlflow_llm_cost(
+            model=response.model,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            cost_usd=response.cost_usd,
+            provider=provider.provider_type.value,
+        )
+
         parsed = json.loads(repair_json(response.content))
     except Exception:
         logger.warning("resolve_turn: LLM call failed, defaulting to query", exc_info=True)
@@ -357,6 +369,15 @@ async def resolve_turn(state: GraphState) -> dict[str, Any]:
     if action == "follow_up_query_refinement":
         result["follow_up_mode"] = parsed.get("follow_up_mode")
         result["follow_up_reason"] = parsed.get("follow_up_reason")
+
+        # FIX #4: If needs_full_compose, clear stale context to ensure fresh build
+        # This prevents hallucinations from similarity-hit shortcuts with no schema
+        if parsed.get("follow_up_mode") == "needs_full_compose":
+            result["last_query_context"] = None
+            result["last_generated_sql"] = None
+            result["last_result_columns"] = None
+            result["last_result_preview_rows"] = None
+            logger.info("resolve_turn: cleared stale context for needs_full_compose follow-up")
 
     logger.info(
         "resolve_turn: history_count=%d action=%s confidence=%.2f resolved_question=%s "

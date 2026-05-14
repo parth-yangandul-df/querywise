@@ -68,6 +68,7 @@ from app.llm.graph.nodes.handle_error import handle_error, route_after_handle_er
 from app.llm.graph.nodes.handle_follow_up import handle_follow_up, route_after_follow_up
 from app.llm.graph.nodes.history_writer import write_history
 from app.llm.graph.nodes.load_history import load_history
+from app.llm.graph.nodes.rebuild_context import rebuild_context, route_after_rebuild
 from app.llm.graph.nodes.resolve_turn import resolve_turn, route_after_resolve
 from app.llm.graph.nodes.show_schema import show_schema
 from app.llm.graph.nodes.similarity_check import route_after_similarity, similarity_check
@@ -93,6 +94,7 @@ def _build_graph(checkpointer: Any | None = None) -> Any:
     graph.add_node("similarity_check", similarity_check)
     graph.add_node("compose_sql", compose_sql)
     graph.add_node("validate_sql", validate_sql)
+    graph.add_node("rebuild_context", rebuild_context)  # FIX #2: Add rebuild node
     graph.add_node("handle_error", handle_error)
     graph.add_node("execute_sql", execute_sql)
     graph.add_node("answer_from_state", answer_from_state)
@@ -142,7 +144,7 @@ def _build_graph(checkpointer: Any | None = None) -> Any:
         "compose_sql",
         route_after_compose,
         {
-            "validate_sql": "validate_sql",
+            "validate_sql": "validate_sql",   # proceed to validation
             "compose_sql": "compose_sql",   # retry: LLM returned empty SQL
             "write_history": "write_history",  # scope violation / no SQL after retries
         },
@@ -153,6 +155,17 @@ def _build_graph(checkpointer: Any | None = None) -> Any:
         route_after_validate,
         {
             "execute_sql": "execute_sql",
+            "rebuild_context": "rebuild_context",  # FIX #2: Route to rebuild on schema mismatch
+            "handle_error": "handle_error",
+        },
+    )
+
+    # FIX #2: Rebuild context then re-validate
+    graph.add_conditional_edges(
+        "rebuild_context",
+        route_after_rebuild,
+        {
+            "validate_sql": "validate_sql",  # Re-validate with new context
             "handle_error": "handle_error",
         },
     )

@@ -223,3 +223,87 @@ def mlflow_span(
         return wrapper
 
     return decorator
+
+
+# ---------------------------------------------------------------------------
+# LLM cost tracking helper
+# ---------------------------------------------------------------------------
+
+
+def set_mlflow_llm_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cost_usd: float | None = None,
+    provider: str | None = None,
+) -> None:
+    """Set token usage and cost on the current active MLflow span.
+
+    MLflow's OpenAI autolog captures token counts for OpenAI models, but
+    non-OpenAI models routed through OpenRouter (deepseek, qwen, llama, etc.)
+    don't appear in litellm's pricing catalog, so cost shows as $0.
+
+    This helper writes the authoritative cost from OpenRouter's ``usage.cost``
+    response field directly onto the span, overriding litellm's estimate.
+
+    Call this after every ``provider.complete()`` call in graph nodes::
+
+        response = await provider.complete(messages, config)
+        set_mlflow_llm_cost(
+            model=response.model,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            cost_usd=response.cost_usd,
+            provider=provider.provider_type.value,
+        )
+
+    Args:
+        model: Model name from the LLM response (e.g. ``deepseek/deepseek-v3.2``).
+        input_tokens: Prompt token count.
+        output_tokens: Completion token count.
+        cost_usd: Actual cost in USD from OpenRouter's ``usage.cost`` field.
+                  ``None`` if unavailable (non-OpenRouter providers).
+        provider: Provider name (e.g. ``openrouter``, ``openai``).
+    """
+    mlflow = _mlflow()
+    if mlflow is None:
+        return
+
+    try:
+        span = mlflow.get_current_active_span()
+        if span is None:
+            return
+
+        total_tokens = input_tokens + output_tokens
+
+        # Set token usage (MLflow standard attribute)
+        span.set_attribute(
+            "mlflow.chat.tokenUsage",
+            {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+            },
+        )
+
+        # Set cost if available — this overrides litellm's $0 estimate
+        if cost_usd is not None:
+            # Rough split: OpenRouter cost is total, estimate input/output
+            # based on typical token pricing ratios. For exact per-token
+            # costs, use OpenRouter's /api/v1/generation endpoint.
+            # The total is what matters for cost dashboards.
+            span.set_attribute(
+                "mlflow.llm.cost",
+                {
+                    "total_cost": cost_usd,
+                    "input_cost": 0.0,  # OpenRouter doesn't split per-token cost
+                    "output_cost": 0.0,
+                },
+            )
+
+        # Set model provider so MLflow can try litellm lookup as fallback
+        if provider:
+            span.set_attribute("mlflow.chat.modelProvider", provider)
+
+    except Exception:
+        logger.debug("set_mlflow_llm_cost failed", exc_info=True)

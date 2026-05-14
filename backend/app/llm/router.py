@@ -40,16 +40,18 @@ def _build_default_routes() -> dict[QueryComplexity, dict]:
             "max_tokens": 1024,
         },
         # Moderate: aggregations, multi-table JOINs — heavy model, generous token budget.
+        # Note: reasoning models (qwen3, deepseek) use <think> tags that consume ~1.5K tokens
+        # before actual SQL output, so budget must account for that overhead.
         QueryComplexity.MODERATE: {
             "provider": provider,
             "model": model,
-            "max_tokens": 2048,
+            "max_tokens": 4096,
         },
         # Complex: CTEs, window functions, subqueries — full budget.
         QueryComplexity.COMPLEX: {
             "provider": provider,
             "model": model,
-            "max_tokens": 4096,
+            "max_tokens": 8192,
         },
     }
 

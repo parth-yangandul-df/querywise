@@ -86,6 +86,17 @@ async def _handle_explain_result(state: GraphState) -> dict[str, Any]:
         else:
             response = await provider.complete(messages, llm_config)
             explanation = response.content
+
+            # Track token usage and cost in MLflow
+            from app.core.mlflow_tracing import set_mlflow_llm_cost
+
+            set_mlflow_llm_cost(
+                model=response.model,
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                cost_usd=response.cost_usd,
+                provider=provider.provider_type.value,
+            )
     except Exception:
         logger.warning("answer_from_state: explain_result LLM call failed", exc_info=True)
         explanation = "I was unable to explain the result at this time."

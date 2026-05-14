@@ -202,11 +202,15 @@ async def handle_error(state: GraphState) -> dict[str, Any]:
     return {
         "generated_sql": resolution.corrected_sql,
         "sql": None,
+        "action": "query",  # CRITICAL: override stale action (e.g. "no_sql_retry", "clarification")
         "retry_count": new_retry_count,
         "previous_attempts": previous_attempts + [resolution.corrected_sql],
         "llm_provider": provider.provider_type.value,
         "llm_model": llm_config.model,
         "_target_node": target_node,
+        "validation_issues": [],  # Clear stale issues — validate_sql will re-evaluate
+        "needs_context_rebuild": False,  # Clear stale rebuild flag
+        "force_include_tables": [],  # Clear stale forced tables
     }
 
 

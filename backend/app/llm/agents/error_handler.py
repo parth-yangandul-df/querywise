@@ -116,6 +116,17 @@ Provide a corrected SQL query. Respond with JSON: corrected_sql, explanation, sh
 
         response = await self.provider.complete(messages, self.config)
 
+        # Track token usage and cost in MLflow
+        from app.core.mlflow_tracing import set_mlflow_llm_cost
+
+        set_mlflow_llm_cost(
+            model=response.model,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            cost_usd=response.cost_usd,
+            provider=self.provider.provider_type.value,
+        )
+
         try:
             parsed = json.loads(repair_json(response.content))
         except json.JSONDecodeError:

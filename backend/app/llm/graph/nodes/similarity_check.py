@@ -79,13 +79,13 @@ async def similarity_check(state: GraphState) -> dict[str, Any]:
 
     if not question_embedding:
         logger.info("similarity_check: skipped - no embedding")
-        return {"similarity_shortcut": False}
+        return {"similarity_shortcut": False, "similarity_hint_sql": None}
 
     if state.get("user_role") == "user" and (
         state.get("resource_id") is not None or state.get("employee_id") is not None
     ):
         logger.info("similarity_check: skipped - scope constraints active")
-        return {"similarity_shortcut": False}
+        return {"similarity_shortcut": False, "similarity_hint_sql": None}
 
     connection_id = uuid.UUID(state["connection_id"])
     db_factory = state["db"]
@@ -110,7 +110,7 @@ async def similarity_check(state: GraphState) -> dict[str, Any]:
 
             if row is None:
                 logger.info("similarity_check: NO validated sample queries found in DB")
-                return {"similarity_shortcut": False}
+                return {"similarity_shortcut": False, "similarity_hint_sql": None}
 
             sample_query, distance = row
             similarity = 1.0 - float(distance)
@@ -154,16 +154,35 @@ async def similarity_check(state: GraphState) -> dict[str, Any]:
                             "similarity_hint_sql": sql,
                         }
 
+                # Conditional fast path: First-turn (no history) with high similarity = execute immediately
+                # Follow-ups need context for proper handling
+                has_history = bool(state.get("loaded_history"))
+                if not has_history and similarity >= 0.92:
+                    logger.info(
+                        "similarity_check: FAST PATH (first-turn, high similarity) -> execute_sql. "
+                        "similarity=%.4f q=%r sql=%r",
+                        similarity,
+                        state["question"][:60],
+                        sql[:200],
+                    )
+                    return {
+                        "similarity_shortcut": True,
+                        "sql": sql,
+                        "generated_sql": sql,
+                    }
+
+                # Follow-up or lower similarity: build context with hint
                 logger.info(
-                    "similarity_check: shortcut matched q=%r similarity=%.4f sql=%r",
-                    state["question"][:60],
+                    "similarity_check: using as hint (has_history=%s similarity=%.4f). "
+                    "q=%r sql=%r",
+                    has_history,
                     similarity,
+                    state["question"][:60],
                     sql[:200],
                 )
                 return {
-                    "similarity_shortcut": True,
-                    "sql": sql,
-                    "generated_sql": sql,
+                    "similarity_shortcut": False,
+                    "similarity_hint_sql": sql,
                 }
 
             logger.info(
@@ -171,10 +190,10 @@ async def similarity_check(state: GraphState) -> dict[str, Any]:
                 similarity,
                 _SIMILARITY_THRESHOLD,
             )
-            return {"similarity_shortcut": False}
+            return {"similarity_shortcut": False, "similarity_hint_sql": None}
     except Exception:
         logger.warning("similarity_check: vector search failed", exc_info=True)
-        return {"similarity_shortcut": False}
+        return {"similarity_shortcut": False, "similarity_hint_sql": None}  # Clear stale hint
 
 
 def route_after_similarity(state: GraphState) -> str:

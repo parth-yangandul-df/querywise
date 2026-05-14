@@ -371,9 +371,9 @@ GLOSSARY_TERMS: list[dict] = [
     {
         "term": "Shadow Resource",
         "definition": "A resource assigned for support or learning purposes and not directly billable.",
-        "sql_expression": "CASE WHEN ProjectResource.Shadow = 1 THEN 1 ELSE 0 END",
-        "related_tables": ["ProjectResource"],
-        "related_columns": ["ProjectResource.Shadow"],
+        "sql_expression": "CASE WHEN ProjectResource.Shadow = 1 AND ProjectResource.Billable = 0 AND Resource.IsReportingPerson = 0 THEN 1 ELSE 0 END",
+        "related_tables": ["ProjectResource", "Resource"],
+        "related_columns": ["ProjectResource.Shadow", "ProjectResource.Billable", "Resource.IsReportingPerson"],
     },
     {
         "term": "Resource Allocation Percentage",
@@ -385,9 +385,9 @@ GLOSSARY_TERMS: list[dict] = [
     {
         "term": "Bench Resource",
         "definition": "A resource not currently allocated to billable work.",
-        "sql_expression": "CASE WHEN ProjectResource.Bench = 1 THEN 1 ELSE 0 END",
-        "related_tables": ["ProjectResource"],
-        "related_columns": ["ProjectResource.Bench"],
+        "sql_expression": "CASE WHEN Project.ProjectName = 'DF-Bench' THEN 1 ELSE 0 END",
+        "related_tables": ["Project"],
+        "related_columns": ["Project.ProjectName"],
     },
     {
         "term": "Client Status",
@@ -404,6 +404,13 @@ GLOSSARY_TERMS: list[dict] = [
         "related_tables": ["Status"],
         "related_columns": ["Status.StatusName", "Status.ReferenceId"],
         "examples": ["SELECT * FROM Status WHERE ReferenceId = 2"],
+    },
+    {
+        "term": "Internal Project",
+        "definition": "A project that is classified as internal within the organization.",
+        "sql_expression": "CASE WHEN Client.ClientName = 'Internal Projects' THEN 1 ELSE 0 END",
+        "related_tables": ["Client"],
+        "related_columns": ["Client.ClientName"],
     },
     {
         "term": "Resource Status",
@@ -747,9 +754,9 @@ METRICS: list[dict] = [
         "metric_name": "bench_resources",
         "display_name": "Bench Resources",
         "description": "Number of resources currently on bench",
-        "sql_expression": "SUM(CASE WHEN ProjectResource.Bench = 1 THEN 1 ELSE 0 END)",
+        "sql_expression": "SUM(CASE WHEN Project.ProjectName = 'DF-Bench' THEN 1 ELSE 0 END)",
         "aggregation_type": "sum",
-        "related_tables": ["ProjectResource"],
+        "related_tables": ["Project"],
     },
     {
         "metric_name": "active_status_count",
@@ -1221,17 +1228,6 @@ ACTIVE ALLOCATIONS:
 For current resource-project allocations always filter:
   ProjectResource.IsActive = 1 AND ProjectResource.AssignmentDate <= GETDATE()
 
-BENCH RESOURCES — resources assigned to the internal bench project:
-  Bench resources are tracked via the project named 'DF-Bench'.
-  Pattern: JOIN ProjectResource pr ON pr.ProjectId = p.ProjectId
-           WHERE p.ProjectName = 'DF-Bench'
-             AND pr.IsActive = 1
-             AND pr.PercentageAllocation > 1
-             AND pr.AssignmentDate <= GETDATE()
-             AND r.IsActive = 1
-             AND r.StatusId = 8
-  Do NOT use ProjectResource.Bench = 1 alone — use the 'DF-Bench' project filter.
-
 BILLING RATE OVERRIDE (most specific level wins):
   ProjectResource.Rate > Project.HourlyBillingRate > Client.HourlyBillingRate
   Always use the most specific rate available when computing billing calculations.
@@ -1344,6 +1340,7 @@ SAMPLE_QUERIES: list[dict] = [
         "tags": ["client", "project"],
         "is_validated": True,
     },
+
     {
         "natural_language": "What is the total hours logged per resource?",
         "sql_query": "SELECT r.ResourceName, SUM(e.Hrs) FROM TS_EODDetails e JOIN Resource r ON e.ResourceId = r.ResourceId GROUP BY r.ResourceName",
@@ -1569,7 +1566,7 @@ SAMPLE_QUERIES: list[dict] = [
     },
     {
         "natural_language": "List all resources working on a specific project.",
-        "sql_query": "SELECT r.ResourceName FROM ProjectResource pr JOIN Resource r ON pr.ResourceId = r.ResourceId JOIN Project p on p.ProjectId=pr.ProjectId WHERE p.ProjectName like '%' + @ProjectName + '%'  and r.isactive=1 and r.statusid=8;",
+        "sql_query": "SELECT r.ResourceName FROM ProjectResource pr JOIN Resource r ON pr.ResourceId = r.ResourceId JOIN Project p on p.ProjectId=pr.ProjectId WHERE p.ProjectName like '%' + @ProjectName + '%'  and r.isactive=1 and r.statusid=8 AND GETDATE() BETWEEN pr.StartDate AND ISNULL(pr.EndDate, '9999-12-31');",
         "description": "Project team composition.",
         "tags": ["project", "resource"],
         "is_validated": True,
@@ -1942,13 +1939,6 @@ SAMPLE_QUERIES: list[dict] = [
         "is_validated": True,
     },
     {
-        "natural_language": "Which projects are dependent on resources with low experience?",
-        "sql_query": "  ",
-        "description": "Delivery risk due to inexperience.",
-        "tags": ["project", "risk"],
-        "is_validated": True,
-    },
-    {
         "natural_language": "Which clients have multiple stakeholders but low engagement effort?",
         "sql_query": "SELECT c.ClientName, COUNT(cs.StakeholderId), SUM(e.Hrs) FROM Client c JOIN ClientStakeholder cs ON c.ClientId = cs.ClientId LEFT JOIN TS_EODDetails e ON c.ClientName = e.ClientName GROUP BY c.ClientName HAVING SUM(e.Hrs) < 50;",
         "description": "Low ROI engagements.",
@@ -2025,6 +2015,26 @@ SAMPLE_QUERIES: list[dict] = [
         "tags": ["manager"],
         "is_validated": True,
     },
+    {
+        "natural_language": "Which resources are working on, or assigned to Internal Projects?",
+        "sql_query": """select r.Resourcename, p.ProjectName,pr.PercentageAllocation, pr.AssignmentDate, pr.Billable, pr.EndDate from ProjectResource pr
+                join Client c on c.ClientId = pr.ClientId
+                join Resource r on r.ResourceId = pr.ResourceId
+                join Project p on p.ProjectId = pr.ProjectId
+                where pr.IsActive = 1
+                    AND pr.AssignmentDate <= GETDATE()
+                    AND (pr.EndDate IS NULL OR pr.EndDate > GETDATE())
+                    AND r.IsActive = 1
+                    AND r.StatusId = 8
+                    and r.IsReportingPerson=0
+                    and pr.PercentageAllocation>1
+                    and (pr.Billable=0 and pr.Shadow=1)
+                    and c.ClientName = 'Internal Projects';""",
+        "description": "Internal project assignments.",
+        "tags": ["Internal", "project", "resource"],
+        "is_validated": True,
+    },
+
     {
         "natural_language": "Which projects show declining completion percentages despite high effort?",
         "sql_query": "SELECT e.Project, AVG(CAST(e.CompletionPercent AS FLOAT)), SUM(e.Hrs) FROM TS_EODDetails e GROUP BY e.Project HAVING SUM(e.Hrs) > 100;",

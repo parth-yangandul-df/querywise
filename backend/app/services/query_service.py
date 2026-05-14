@@ -250,6 +250,11 @@ async def execute_nl_query(
         "explanation": None,
         "llm_provider": None,
         "llm_model": None,
+        # FIX #1: Similarity hint defaults
+        "similarity_hint_sql": None,
+        # FIX #2: Context rebuild defaults
+        "needs_context_rebuild": False,
+        "force_include_tables": [],
         # Interpretation defaults
         "answer": None,
         "highlights": [],
@@ -275,6 +280,18 @@ async def execute_nl_query(
                 get_compiled_graph().ainvoke(initial_state),
                 timeout=settings.pipeline_timeout_seconds,
             )
+
+        # FIX #6: Debug mode — log state for troubleshooting
+        if settings.debug:
+            logger.info(
+                "DEBUG: question=%r action=%s tables=%d sql=%s error=%s",
+                question[:60],
+                final_state.get("action"),
+                len(final_state.get("schema_tables", {})),
+                (final_state.get("generated_sql") or "")[:50] if final_state.get("generated_sql") else None,
+                final_state.get("error"),
+            )
+
         PIPELINE_DURATION.labels(outcome="success").observe(time.monotonic() - pipeline_start)
     except TimeoutError as err:
         PIPELINE_DURATION.labels(outcome="timeout").observe(time.monotonic() - pipeline_start)
@@ -612,3 +629,5 @@ def _serialize_rows(rows: list[list]) -> list[list]:
                 serialized_row.append(val)
         serialized.append(serialized_row)
     return serialized
+
+
