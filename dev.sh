@@ -25,7 +25,7 @@ NC='\033[0m'
 # Ports
 PORT_DB=5434
 PORT_BACKEND=8000
-PORT_FRONTEND=5173
+PORT_FRONTEND=5174
 PORT_ANGULAR=4200
 PORT_OLLAMA=11434
 PORT_REDIS=6379
@@ -511,9 +511,17 @@ start_angular() {
 
     # Run fully detached (no console window) — survives terminal close
     if is_windows; then
-        start //b //d "$SCRIPT_DIR/angular-test" npx ng serve --port $PORT_ANGULAR
+        bash -c "
+            cd '$SCRIPT_DIR/angular-test'
+            echo \$\$ > '$pid_file'
+            exec npx ng serve --port $PORT_ANGULAR
+        " >/dev/null 2>&1 &
     else
-        nohup npx ng serve --port $PORT_ANGULAR > /dev/null 2>&1 &
+        bash -c "
+            cd '$SCRIPT_DIR/angular-test'
+            echo \$\$ > '$pid_file'
+            exec npx ng serve --port $PORT_ANGULAR
+        " >/dev/null 2>&1 &
     fi
 
     # Wait for port to be available — give it 45s (Angular is slow to start)

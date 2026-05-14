@@ -95,8 +95,6 @@
                 <!-- Metadata -->
                 <div class="result-meta">
                   <span>{{ msg.result.row_count }} rows</span>
-                  <span>·</span>
-                  <span>{{ msg.result.execution_time_ms }}ms</span>
                   @if (msg.result.retry_count > 0) {
                     <span>·</span>
                     <span class="retry-badge">{{ msg.result.retry_count }} retries</span>
@@ -264,6 +262,19 @@
               <div class="message-content">
                 <p class="error-title">Error</p>
                 <p class="error-text">{{ msg.errorMessage }}</p>
+                @if (msg.errorRetryable && _lastUserMessage) {
+                  @if (msg.errorRetryAfterSeconds != null && getErrorCountdown(msg) > 0) {
+                    <button class="retry-btn" (click)="retryMessage(msg)">
+                      Retry in {{ getErrorCountdown(msg) }}s
+                    </button>
+                  } @else {
+                    <button class="retry-btn retry-btn-now" (click)="retryMessage(msg)">
+                      Retry
+                    </button>
+                  }
+                } @else if (!msg.errorRetryable) {
+                  <p class="support-text">Contact support if this persists.</p>
+                }
               </div>
             </div>
           }
@@ -283,7 +294,7 @@
                 <div class="progress-bar">
                   <div class="progress-fill" [style.width.%]="pipelineStage()!.progress"></div>
                 </div>
-                <span class="stage-label">{{ getStageLabel(pipelineStage()!.stage) }}</span>
+                <span class="stage-label">{{ pipelineStage()!.label }}</span>
               </div>
             </div>
           </div>

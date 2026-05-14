@@ -1,7 +1,10 @@
 """Agent: Query Composer — converts NL questions to SQL."""
 
 import json
+import logging
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 from app.llm.base_provider import BaseLLMProvider, LLMConfig, LLMMessage
 from app.llm.prompts.composer_prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
@@ -59,22 +62,36 @@ class QueryComposerAgent:
         response = await self.provider.complete(messages, self.config)
 
         # Parse JSON response (repair handles common Ollama/local model issues)
+        raw_content = response.content
         try:
-            parsed = json.loads(repair_json(response.content))
+            parsed = json.loads(repair_json(raw_content))
         except json.JSONDecodeError:
+            logger.warning(
+                "compose: JSON parse failed — raw response (first 500 chars): %r",
+                raw_content[:500],
+            )
             # Try to extract SQL from non-JSON response
             parsed = {
-                "sql": _extract_sql_from_text(response.content),
+                "sql": _extract_sql_from_text(raw_content),
                 "explanation": "Generated SQL query",
                 "confidence": 0.5,
                 "tables_used": [],
                 "assumptions": [],
             }
 
+        sql_value = parsed.get("sql", "").replace("\\n", "\n").replace("\\t", "\t")
+        if not sql_value.strip():
+            logger.warning(
+                "compose: empty SQL after parsing — raw response (first 500 chars): %r "
+                "parsed_keys=%s",
+                raw_content[:500],
+                list(parsed.keys()),
+            )
+
         return ComposerOutput(
-            generated_sql=parsed.get("sql", "").replace("\\n", "\n").replace("\\t", "\t"),
+            generated_sql=sql_value,
             explanation=parsed.get("explanation", ""),
-            confidence=parsed.get("confidence", 0.5),
+            confidence=float(parsed.get("confidence", 0.5)),
             tables_used=parsed.get("tables_used", []),
             assumptions=parsed.get("assumptions", []),
         )

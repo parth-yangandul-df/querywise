@@ -43,13 +43,13 @@ def _build_default_routes() -> dict[QueryComplexity, dict]:
         QueryComplexity.MODERATE: {
             "provider": provider,
             "model": model,
-            "max_tokens": 1500,
+            "max_tokens": 2048,
         },
         # Complex: CTEs, window functions, subqueries — full budget.
         QueryComplexity.COMPLEX: {
             "provider": provider,
             "model": model,
-            "max_tokens": 2048,
+            "max_tokens": 4096,
         },
     }
 

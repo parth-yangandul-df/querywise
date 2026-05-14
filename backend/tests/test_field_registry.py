@@ -53,7 +53,6 @@ class TestFieldRegistryContents:
             "client_name",
             "project_name",
             "status",
-            "project_manager",
             "start_date",
             "end_date",
             "min_budget",

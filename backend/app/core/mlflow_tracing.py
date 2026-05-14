@@ -83,6 +83,10 @@ def setup_mlflow(
         # run_tracer_inline=True fixes async context propagation (required for ainvoke).
         mlflow.langchain.autolog(run_tracer_inline=True)
 
+        # OpenAI autolog captures OpenRouter calls with token usage and cost.
+        # Works with any OpenAI-compatible API (OpenRouter, local Ollama, etc.)
+        mlflow.openai.autolog()
+
         logger.info(
             "MLflow tracing enabled — tracking_uri=%s experiment=%s",
             tracking_uri,

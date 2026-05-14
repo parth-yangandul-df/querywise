@@ -71,10 +71,10 @@ class SQLValidatorAgent:
 
         # Level 2: Schema validation (if schema context provided)
         if schema_tables:
-            schema_issues = _check_schema_references(sql, schema_tables)
+            schema_status, schema_issues = _check_schema_references(sql, schema_tables)
             if schema_issues:
                 return ValidationResult(
-                    status=ValidationStatus.SCHEMA_MISMATCH,
+                    status=schema_status,
                     issues=schema_issues,
                 )
 
@@ -87,11 +87,14 @@ class SQLValidatorAgent:
 def _check_schema_references(
     sql: str,
     schema_tables: dict[str, list[str]],
-) -> list[str]:
+) -> tuple[ValidationStatus, list[str]]:
     """Check if tables/columns referenced in SQL exist in the schema.
 
     Uses sqlglot to parse SQL into an AST and extract table/column references.
     Handles all SQL dialects including T-SQL (SQL Server).
+
+    Returns (status, issues). Status is SYNTAX_ERROR on parse failure,
+    SCHEMA_MISMATCH on unknown tables/columns, VALID when clean.
     """
     issues: list[str] = []
 
@@ -99,9 +102,8 @@ def _check_schema_references(
         # Parse with T-SQL dialect for SQL Server compatibility
         parsed = sqlglot.parse_one(sql, read="tsql")
     except sqlglot.errors.ParseError as e:
-        # Syntax error in SQL - let it through, the DB will catch it
-        logger.debug("SQL parse error (will defer to DB): %s", e)
-        return issues
+        logger.debug("SQL syntax error detected by parser: %s", e)
+        return ValidationStatus.SYNTAX_ERROR, [f"SQL syntax error: {e}"]
 
     # Build lookup sets (case-insensitive)
     all_table_names = {name.upper() for name in schema_tables}
@@ -122,4 +124,4 @@ def _check_schema_references(
         if col_name not in all_known_cols:
             issues.append(f"Column '{column.name}' not found in schema")
 
-    return issues
+    return ValidationStatus.SCHEMA_MISMATCH if issues else ValidationStatus.VALID, issues

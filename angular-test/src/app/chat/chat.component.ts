@@ -1,4 +1,4 @@
-import { Component, OnInit, signal, ElementRef, ViewChild, effect } from '@angular/core';
+import { Component, OnInit, signal, ElementRef, ViewChild, effect, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -24,6 +24,8 @@ export class ChatComponent implements OnInit {
   @ViewChild('inputField') inputField!: ElementRef<HTMLTextAreaElement>;
 
   input = '';
+  _lastUserMessage = '';
+  errorCountdowns = signal<Record<string, number>>({});
   messages = signal<ChatMessage[]>([]);
   isLoading = signal(false);
   pipelineStage = signal<{ stage: string; label: string; progress: number } | null>(null);
@@ -32,6 +34,7 @@ export class ChatComponent implements OnInit {
   sqlExpanded = signal<Record<string, boolean>>({});
   copiedSql = signal<string | null>(null);
   isDark = signal(false);
+  private _countdownInterval: ReturnType<typeof setInterval> | null = null;
 
   tableStates = signal<Record<string, TableState>>({});
 
@@ -56,6 +59,7 @@ export class ChatComponent implements OnInit {
       this.isLoading.set(this.chatService.isLoading());
       this.pipelineStage.set(this.chatService.pipelineStage());
       this.initializeTableStates(msgs);
+      this._initErrorCountdowns(msgs);
     });
   }
 
@@ -101,6 +105,62 @@ export class ChatComponent implements OnInit {
     this.connectionId.set(connId);
     this.chatService.init(connId);
     this.recentQuestions.set(this.chatService.loadRecentQuestions());
+
+    this._countdownInterval = setInterval(() => this._tickCountdowns(), 1000);
+  }
+
+  ngOnDestroy() {
+    if (this._countdownInterval) {
+      clearInterval(this._countdownInterval);
+      this._countdownInterval = null;
+    }
+  }
+
+  private _tickCountdowns() {
+    const current = this.errorCountdowns();
+    const next: Record<string, number> = {};
+    let changed = false;
+    for (const [id, secs] of Object.entries(current)) {
+      if (secs > 0) {
+        next[id] = secs - 1;
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.errorCountdowns.set(next);
+    }
+  }
+
+  private _initErrorCountdowns(msgs: ChatMessage[]) {
+    const current = this.errorCountdowns();
+    const next = { ...current };
+    let changed = false;
+    for (const msg of msgs) {
+      if (msg.role === 'error' && msg.errorRetryAfterSeconds && msg.errorRetryAfterSeconds > 0) {
+        if (!(msg.id in next)) {
+          next[msg.id] = msg.errorRetryAfterSeconds;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      this.errorCountdowns.set(next);
+    }
+  }
+
+  retryMessage(msg: ChatMessage) {
+    if (this._lastUserMessage) {
+      this.input = this._lastUserMessage;
+      this.sendMessage();
+    }
+  }
+
+  getErrorCountdown(msg: ChatMessage): number {
+    return this.errorCountdowns()[msg.id] ?? 0;
+  }
+
+  trackErrorCountdown(msg: ChatMessage): boolean {
+    return this.getErrorCountdown(msg) > 0;
   }
 
   getTableState(resultId: string): TableState {
@@ -267,6 +327,7 @@ export class ChatComponent implements OnInit {
     if (!this.input.trim() || this.isLoading()) return;
     const content = this.input.trim();
     this.chatService.saveRecentQuestion(content);
+    this._lastUserMessage = content;
     this.input = '';
     await this.chatService.sendMessage(content);
     setTimeout(() => this.scrollToBottom(), 50);
@@ -317,16 +378,6 @@ export class ChatComponent implements OnInit {
     await this.chatService.resetChat();
     this.recentQuestions.set(this.chatService.loadRecentQuestions());
     this.tableStates.set({});
-  }
-
-  getStageLabel(stage: string): string {
-    const labels: Record<string, string> = {
-      'understanding': 'Understanding your question...',
-      'generating_sql': 'Generating SQL...',
-      'running_query': 'Running query...',
-      'interpreting': 'Interpreting results...'
-    };
-    return labels[stage] || stage;
   }
 
   trackByMessage(index: number, msg: ChatMessage): string {

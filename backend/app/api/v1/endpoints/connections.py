@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import require_role
 from app.api.v1.schemas.connection import (
     ConnectionCreate,
     ConnectionResponse,
@@ -38,7 +38,7 @@ def _to_response(c: object) -> ConnectionResponse:
 @router.get("", response_model=list[ConnectionResponse])
 async def list_connections(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("admin")),
 ):
     connections = await connection_service.list_connections(db)
     return [_to_response(c) for c in connections]
@@ -68,7 +68,7 @@ async def create_connection(
 async def get_connection(
     connection_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("admin")),
 ):
     conn = await connection_service.get_connection(db, connection_id)
     return _to_response(conn)

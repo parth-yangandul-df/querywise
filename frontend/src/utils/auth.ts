@@ -46,7 +46,7 @@ export function getToken(): null {
 
 /** @deprecated Token is set by the backend as an HttpOnly cookie on login. */
 export function setToken(_token: string): void {
-  // no-op
+  void _token;
 }
 
 /** @deprecated Use clearUserInfo() + POST /auth/logout instead. */

@@ -1,22 +1,14 @@
 """Inferred relationship rules for SQL Server schemas with sparse enforced FKs.
 
-When a SQL Server database does not have enforced foreign-key constraints
-(or they are not captured by introspection), the LLM has no join guidance and
-will guess — often incorrectly.  This module provides a curated set of
-*inferred* join rules derived from column-name conventions.
+Originally provided curated join rules for schemas without enforced FKs.
+Now DEPRECATED — declared FK relationships are extracted during introspection
+and stored as CachedRelationship rows, making hardcoded inferred rules redundant.
 
-These rules are:
-  - Applied at query time (not stored as CachedRelationship rows)
-  - Distinguished from declared FKs in the assembled prompt
-  - Used by context_builder to pull in referenced tables even when they are
-    not selected by the embedding / keyword retrieval stages
+The module is kept for backward compatibility and future use if a schema
+genuinely lacks FK metadata.  The _INFERRED_RULES list is currently empty.
 
-Confirmed join rules for the PRMS SQL Server schema
-(validated by the project team):
-  Client.StatusId          -> Status.StatusId       (ReferenceId=1)
-  Project.ProjectStatusId  -> Status.StatusId       (ReferenceId=2)
-  Project.ClientId         -> Client.ClientId
-  Resource.ReportingTo     -> Resource.ResourceId   (self-join)
+Status lookup disambiguation (ReferenceId filters) is handled by the
+"PRMS Status Lookup Disambiguation" knowledge document instead.
 """
 
 from __future__ import annotations
@@ -44,66 +36,22 @@ class InferredRelationship:
 
 
 # ---------------------------------------------------------------------------
-# Curated inferred join rules — expand as more are confirmed
+# Curated inferred join rules — DEPRECATED.
+#
+# These rules were originally added for schemas with sparse enforced FKs,
+# but the declared FK relationships are now extracted during introspection
+# and stored as CachedRelationship rows.  The prompt assembler already
+# deduplicates declared FKs against inferred rules, so having them here
+# just adds noise.
+#
+# The Status lookup disambiguation (ReferenceId filters) is now handled
+# by the "PRMS Join Rules and Status Lookup Guide" knowledge document.
+#
+# Keep the list empty — all join guidance comes from:
+#   1. Declared FKs (CachedRelationship) — shown in RELATIONSHIPS section
+#   2. Knowledge docs — shown in BUSINESS KNOWLEDGE section
 # ---------------------------------------------------------------------------
-_INFERRED_RULES: list[InferredRelationship] = [
-    InferredRelationship(
-        source_table="Client",
-        source_column="StatusId",
-        target_table="Status",
-        target_column="StatusId",
-        filter_hint="Status.ReferenceId = 1",
-        note=(
-            "Client status label: JOIN Status ON Client.StatusId = Status.StatusId"
-            " AND Status.ReferenceId = 1"
-        ),
-    ),
-    InferredRelationship(
-        source_table="Project",
-        source_column="ProjectStatusId",
-        target_table="Status",
-        target_column="StatusId",
-        filter_hint="Status.ReferenceId = 2",
-        note=(
-            "Project status label: JOIN Status ON Project.ProjectStatusId = Status.StatusId"
-            " AND Status.ReferenceId = 2"
-        ),
-    ),
-    InferredRelationship(
-        source_table="Project",
-        source_column="ClientId",
-        target_table="Client",
-        target_column="ClientId",
-        note="Project belongs to Client: JOIN Client ON Project.ClientId = Client.ClientId",
-    ),
-    InferredRelationship(
-        source_table="Resource",
-        source_column="ReportingTo",
-        target_table="Resource",
-        target_column="ResourceId",
-        note=(
-            "Reporting hierarchy self-join: JOIN Resource AS Manager "
-            "ON Resource.ReportingTo = Manager.ResourceId"
-        ),
-    ),
-    InferredRelationship(
-        source_table="ProjectResource",
-        source_column="ResourceId",
-        target_table="Resource",
-        target_column="ResourceId",
-        note=(
-            "Allocation to resource: JOIN Resource"
-            " ON ProjectResource.ResourceId = Resource.ResourceId"
-        ),
-    ),
-    InferredRelationship(
-        source_table="ProjectResource",
-        source_column="ProjectId",
-        target_table="Project",
-        target_column="ProjectId",
-        note="Allocation to project: JOIN Project ON ProjectResource.ProjectId = Project.ProjectId",
-    ),
-]
+_INFERRED_RULES: list[InferredRelationship] = []
 
 
 def _question_words(question: str) -> set[str]:

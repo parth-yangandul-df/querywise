@@ -1,6 +1,5 @@
 """Maps NL terms to relevant tables and columns using hybrid search."""
 
-import asyncio
 import logging
 import time
 import uuid
@@ -131,7 +130,9 @@ async def find_relevant_tables(
     anchor_table_names = _detect_anchor_tables(question_lower, keywords)
 
     if question_embedding is not None:
-        embedding_results = await _vector_search_tables(db, connection_id, question_embedding, limit=15)
+        embedding_results = await _vector_search_tables(
+            db, connection_id, question_embedding, limit=15
+        )
     else:
         embedding_results = []
 

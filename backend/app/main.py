@@ -168,35 +168,6 @@ async def lifespan(app: FastAPI):
             exc_info=True,
         )
 
-    # Pre-embed intent catalog so first query does not pay embedding cost
-    # Wrapped in try/except — failure logs warning but does NOT prevent startup
-    from app.llm.graph.intent_catalog import INTENT_CATALOG, ensure_catalog_embedded
-
-    logger.info("QueryWise startup: pre-embedding intent catalog (%d entries)", len(INTENT_CATALOG))
-    try:
-        await ensure_catalog_embedded()
-        logger.info("QueryWise startup: intent catalog embedded OK")
-    except Exception:
-        logger.warning(
-            "Intent catalog pre-embedding failed; first query will embed on demand",
-            exc_info=True,
-        )
-
-    # Validate FieldRegistry completeness before traffic starts
-    # Uses StartupIntegrityError (not assert) so it survives Python -O optimization
-    from app.llm.graph.nodes.field_registry import (
-        StartupIntegrityError,
-        validate_registry_completeness,
-    )
-
-    logger.info("QueryWise startup: validating field registry completeness")
-    try:
-        validate_registry_completeness()
-        logger.info("QueryWise startup: field registry validated OK")
-    except StartupIntegrityError:
-        logger.error("Field registry validation failed — startup aborted", exc_info=True)
-        raise
-
     # Auto-setup sample database (only when feature flag is enabled)
     if settings.auto_setup_sample_db:
         from app.services.setup_service import auto_setup_sample_db

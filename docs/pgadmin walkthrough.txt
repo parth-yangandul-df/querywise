@@ -1,0 +1,15 @@
+# Open http://localhost:5050
+# Login: admin@querywise.dev / admin
+# Add Server → General: name=QueryWise App DB
+# Connection: host=app-db, port=5432, db=saras_metadata, user=parthy, pass=querywise_app
+
+
+
+see tables:
+SELECT table_name 
+FROM information_schema.tables 
+WHERE table_schema = 'public' 
+  AND table_type = 'BASE TABLE';
+
+for sql server connection:
+DRIVER={ODBC Driver 18 for SQL Server};Server=prmsadmin.database.windows.net;Database=DF_PRMS_DB_Test;UID=prmsadmin;PWD=admin@123;Encrypt=yes;TrustServerCertificate=no;

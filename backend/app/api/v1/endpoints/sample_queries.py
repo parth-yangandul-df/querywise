@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import require_role
 from app.core.exceptions import NotFoundError
 from app.db.models.sample_query import SampleQuery
 from app.db.models.user import User
@@ -79,7 +79,7 @@ class SampleQueryResponse(BaseModel):
 async def list_sample_queries(
     connection_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("admin")),
 ):
     result = await db.execute(
         select(SampleQuery)

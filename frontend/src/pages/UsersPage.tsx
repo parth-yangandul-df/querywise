@@ -174,7 +174,7 @@ function UserFormModal({
         if (!/[A-Z]/.test(value)) return 'Password must contain an uppercase letter';
         if (!/[a-z]/.test(value)) return 'Password must contain a lowercase letter';
         if (!/[0-9]/.test(value)) return 'Password must contain a digit';
-        if (!/[!@#$%^&*()_+\-=\[\]{}|;':",./<>?]/.test(value)) return 'Password must contain a special character';
+        if (!/[!@#$%^&*()_+\-={}|;':",./<>?]/.test(value)) return 'Password must contain a special character';
         return null;
       },
       role: (value) => (value ? null : 'Role is required'),
@@ -230,8 +230,9 @@ function UserFormModal({
       form.reset();
       onClose();
     },
-    onError: (err: any) => {
-      const msg = err?.response?.data?.detail || err?.message || 'Something went wrong';
+    onError: (err: unknown) => {
+      const axiosError = err as { response?: { data?: { detail?: string } } };
+      const msg = axiosError?.response?.data?.detail || String(err);
       notifications.show({
         title: 'Error',
         message: msg,

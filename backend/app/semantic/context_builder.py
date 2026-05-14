@@ -16,8 +16,10 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+import sqlglot
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlglot import exp
 
 from app.core.mlflow_tracing import mlflow_span
 from app.db.models.schema_cache import CachedRelationship, CachedTable
@@ -54,6 +56,13 @@ _EMBEDDING_CACHE_TTL_SECONDS = 300
 _CONTEXT_CACHE: dict[str, tuple[Any, float]] = {}
 _CONTEXT_CACHE_TTL_SECONDS = 300
 _CONTEXT_CACHE_MAX_SIZE = 128
+
+# Per-key locks prevent redundant concurrent context/embedding builds.
+# Without locks, N concurrent requests for the same question would all
+# miss the cache and fan out to N parallel LLM+DB calls before any of
+# them can populate the cache.
+_CONTEXT_LOCKS: dict[str, asyncio.Lock] = {}
+_EMBEDDING_LOCKS: dict[str, asyncio.Lock] = {}
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +115,47 @@ async def build_context(
             logger.debug("Context cache hit for question: %r", question[:50])
             return context
 
+    # Acquire a per-key lock so concurrent requests for the same question don't
+    # each fan out to N parallel LLM+DB builds (thundering-herd). The actual
+    # build runs inside the lock; a re-check at the top short-circuits if another
+    # coroutine already populated the cache while we waited.
+    if context_cache_key not in _CONTEXT_LOCKS:
+        _CONTEXT_LOCKS[context_cache_key] = asyncio.Lock()
+
+    return await _build_context_locked(
+        context_cache_key, connection_id, question, dialect, db
+    )
+
+
+async def _build_context_locked(
+    context_cache_key: str,
+    connection_id: uuid.UUID,
+    question: str,
+    dialect: str,
+    db: "AsyncSession",
+) -> "BuiltContext":
+    """Build context under a per-key lock to prevent concurrent duplicate builds."""
+    async with _CONTEXT_LOCKS[context_cache_key]:
+        # Re-check after acquiring lock — another coroutine may have built it already
+        now = time.time()
+        cached_context = _CONTEXT_CACHE.get(context_cache_key)
+        if cached_context:
+            context, ts = cached_context
+            if now - ts < _CONTEXT_CACHE_TTL_SECONDS:
+                logger.debug("Context cache hit (post-lock) for question: %r", question[:50])
+                return context
+
+        return await _do_build_context(context_cache_key, connection_id, question, dialect, db)
+
+
+async def _do_build_context(
+    context_cache_key: str,
+    connection_id: uuid.UUID,
+    question: str,
+    dialect: str,
+    db: "AsyncSession",
+) -> "BuiltContext":
+    """Execute the full context build pipeline — called while holding the cache lock."""
     # Step 1: Embed the question (gracefully degrade to keyword-only if unavailable)
     # Check in-memory cache first — identical questions reuse the embedding.
     question_embedding: list[float] | None = None
@@ -121,24 +171,36 @@ async def build_context(
     # If not cached, generate with aggressive 3s timeout.
     # Keyword fallback is nearly as good as vector search for table-name matching.
     if question_embedding is None:
-        try:
-            question_embedding = await asyncio.wait_for(
-                asyncio.shield(embed_text(question)), timeout=3.0
-            )
-            _EMBEDDING_CACHE[cache_key] = (question_embedding, now)
-        except TimeoutError:
-            logger.warning(
-                "Embedding generation timed out after 3s — using keyword-only context. "
-                "Consider switching to a faster embedding provider (e.g. Ollama nomic-embed-text)."
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.warning(
-                "Embedding generation failed — falling back to keyword-only context. "
-                "Ensure the embedding model is pulled (e.g. ollama pull nomic-embed-text).",
-                exc_info=True,
-            )
+        if cache_key not in _EMBEDDING_LOCKS:
+            _EMBEDDING_LOCKS[cache_key] = asyncio.Lock()
+        async with _EMBEDDING_LOCKS[cache_key]:
+            # Re-check after acquiring lock
+            now = time.time()
+            cached = _EMBEDDING_CACHE.get(cache_key)
+            if cached:
+                embedding, ts = cached
+                if now - ts < _EMBEDDING_CACHE_TTL_SECONDS:
+                    question_embedding = embedding
+            if question_embedding is None:
+                try:
+                    question_embedding = await asyncio.wait_for(
+                        asyncio.shield(embed_text(question)), timeout=3.0
+                    )
+                    _EMBEDDING_CACHE[cache_key] = (question_embedding, now)
+                except TimeoutError:
+                    logger.warning(
+                        "Embedding generation timed out after 3s — using keyword-only context. "
+                        "Consider switching to a faster embedding provider "
+                        "(e.g. Ollama nomic-embed-text)."
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning(
+                        "Embedding generation failed — falling back to keyword-only context. "
+                        "Ensure the embedding model is pulled (e.g. ollama pull nomic-embed-text).",
+                        exc_info=True,
+                    )
 
     # Step 2-7: Run independent DB queries in parallel using separate sessions.
     # SQLAlchemy AsyncSession is NOT thread-safe / concurrency-safe — each query
@@ -212,8 +274,41 @@ async def build_context(
         db, connection_id, tables, table_names_in_context, question
     )
 
+    # Inject tables referenced in sample queries but missed by FK expansion /
+    # keyword scoring.  FK expansion skips neighbours with keyword score <= 0.0
+    # (e.g. 'Project' scores 0.0 against "benched resources"), but the LLM sees
+    # the sample SQL and hallucinates those tables.  Force-include them here.
+    if sample_queries:
+        sample_missing_set: set[str] = set()
+        for sq in sample_queries:
+            if not sq.sql_query:
+                continue
+            try:
+                parsed = sqlglot.parse_one(sq.sql_query, read="tsql")
+                for table in parsed.find_all(exp.Table):
+                    name = table.name
+                    if name.lower() not in table_names_in_context:
+                        sample_missing_set.add(name)
+            except Exception:
+                pass
+        if sample_missing_set:
+            sample_missing = list(sample_missing_set)
+            logger.info(
+                "context_builder: sample queries reference missing tables %s — injecting",
+                sample_missing,
+            )
+            extra = await _with_new_session(
+                _fetch_tables_by_names, connection_id, sample_missing
+            )
+            for lt in extra:
+                tables.append(lt)
+                table_names_in_context.add(lt.table.table_name)
+            # Recompute IDs so dictionary/relationship resolution covers them
+            table_ids = [lt.table.id for lt in tables]
+            column_ids = [col.id for lt in tables for col in lt.columns]
+
     logger.info(
-        "context_builder: using all %d tables in context (no cap)",
+        "context_builder: using %d tables in context",
         len(tables),
     )
 
@@ -267,8 +362,6 @@ async def _fetch_tables_by_names(
     """
     if not table_names:
         return []
-
-    from sqlalchemy import or_
 
     conditions = [CachedTable.table_name.ilike(name) for name in table_names]
     result = await db.execute(
@@ -477,3 +570,6 @@ async def _expand_fk_neighbours(
         )
 
     return tables + extra
+
+
+

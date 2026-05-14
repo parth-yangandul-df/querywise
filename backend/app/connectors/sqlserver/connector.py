@@ -16,6 +16,8 @@ no DML statements can persist even if they bypass the SQL blocklist.
 """
 
 import asyncio
+import logging
+import re
 import time
 from typing import Any
 
@@ -37,6 +39,8 @@ _ODBC_DRIVERS = [
     "ODBC Driver 18 for SQL Server",
     "ODBC Driver 17 for SQL Server",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_driver(connection_string: str) -> str:
@@ -368,8 +372,11 @@ class SQLServerConnector(BaseConnector):
                 # Always rollback — never commit, ensuring read-only safety
                 try:
                     await conn.execute("ROLLBACK TRANSACTION")
-                except Exception:
-                    pass
+                except Exception as rollback_exc:
+                    logger.warning(
+                        "sqlserver: ROLLBACK TRANSACTION failed (connection may be closed): %s",
+                        rollback_exc,
+                    )
 
     async def _run_query(
         self, sql: str, params: tuple[Any, ...] | None = None
@@ -423,18 +430,32 @@ class SQLServerConnector(BaseConnector):
 
 
 def _inject_top(sql: str, n: int) -> str:
-    """Wrap a SELECT statement with TOP N if no TOP/LIMIT is present.
+    """Ensure a SELECT statement has TOP N capped at n rows.
 
     Handles:
-        SELECT ...      → SELECT TOP N ...
-        SELECT TOP ...  → unchanged
+        SELECT ...          → SELECT TOP N ...
+        SELECT TOP M ...    → SELECT TOP min(M, N) ... (enforces cap)
+        SELECT DISTINCT ... → SELECT DISTINCT TOP N ...
     Also strips trailing semicolons (T-SQL doesn't need them and some
     drivers reject them in subqueries).
     """
     stripped = sql.strip().rstrip(";").strip()
-
     upper = stripped.upper()
-    if "TOP " in upper or "LIMIT " in upper:
+
+    # Check for existing TOP clause and enforce the cap
+    top_match = re.search(r"\bTOP\s+(\d+)\b", upper)
+    if top_match:
+        existing_n = int(top_match.group(1))
+        if existing_n <= n:
+            # Existing TOP is already within limit — leave it unchanged
+            return stripped
+        # Existing TOP exceeds our cap — replace it with n
+        start = top_match.start(1)
+        end = top_match.end(1)
+        return f"{stripped[:start]}{n}{stripped[end:]}"
+
+    if "LIMIT " in upper:
+        # LIMIT is not T-SQL syntax but guard against copy-paste SQL
         return stripped
 
     if upper.startswith("SELECT DISTINCT"):

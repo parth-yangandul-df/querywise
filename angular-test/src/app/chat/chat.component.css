@@ -451,9 +451,35 @@
 .error-text {
   font-size: 0.875rem;
   color: #991b1b;
-  margin: 0;
+  margin: 0 0 8px;
 }
 .chat-page.dark .error-text { color: #fca5a5; }
+
+.retry-btn {
+  display: inline-block;
+  padding: 6px 14px;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  background: transparent;
+  color: #dc2626;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.retry-btn:hover { background: #fef2f2; }
+.chat-page.dark .retry-btn { border-color: #7f1d1d; color: #fca5a5; }
+.chat-page.dark .retry-btn:hover { background: #450a0a; }
+.retry-btn-now { border-color: #6366f1; color: #6366f1; }
+.retry-btn-now:hover { background: #eef2ff; }
+.chat-page.dark .retry-btn-now { border-color: #818cf8; color: #818cf8; }
+.chat-page.dark .retry-btn-now:hover { background: #1e1b4b; }
+
+.support-text {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 8px 0 0;
+}
 
 /* ── Typing Indicator ────────────────────────────────────────────────────── */
 .typing-message .message-content {

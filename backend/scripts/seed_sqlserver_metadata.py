@@ -40,14 +40,15 @@ DICTIONARY ENTRIES NOTE:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
+import uuid
 from pathlib import Path
 from uuid import UUID
 
 import psycopg
 from dotenv import dotenv_values, find_dotenv
-
 
 # =============================================================================
 # 1. GLOSSARY TERMS
@@ -117,6 +118,37 @@ GLOSSARY_TERMS: list[dict] = [
         "sql_expression": "Resource.Secondaryskill",
         "related_tables": ["Resource"],
         "related_columns": ["Resource.Secondaryskill"],
+    },
+    {
+        "term": "skills",
+        "definition": (
+            "Skill data is spread across four tables: "
+            "PA_Skills (master skill catalogue), "
+            "PA_SubSkills (subskills nested under each skill), "
+            "PA_ResourceSkills (bridge table — which skills and subskills each resource holds), "
+            "and Resource.Primaryskill / Resource.Secondaryskill columns for each resource's "
+            "declared primary and secondary skill. "
+            "Always join PA_Skills and PA_SubSkills via PA_ResourceSkills when asking about "
+            "skills, subskills, primary skills, or secondary skills."
+        ),
+        "sql_expression": (
+            "JOIN PA_ResourceSkills rs ON r.ResourceId = rs.ResourceId "
+            "JOIN PA_Skills s ON rs.SkillId = s.SkillId "
+            "LEFT JOIN PA_SubSkills ss ON rs.SubSkillId = ss.SubSkillId"
+        ),
+        "related_tables": ["PA_Skills", "PA_SubSkills", "PA_ResourceSkills", "Resource"],
+        "related_columns": [
+            "PA_ResourceSkills.ResourceId",
+            "PA_ResourceSkills.SkillId",
+            "PA_ResourceSkills.SubSkillId",
+            "PA_Skills.SkillId",
+            "PA_Skills.Name",
+            "PA_SubSkills.SubSkillId",
+            "PA_SubSkills.Name",
+            "PA_SubSkills.SkillId",
+            "Resource.Primaryskill",
+            "Resource.Secondaryskill",
+        ],
     },
     {
         "term": "Date of Joining",
@@ -1210,7 +1242,7 @@ PROJECT TIMELINE COLUMNS:
         """.strip(),
     },
     {
-        "title": "PRMS Join Rules and Status Lookup Guide",
+        "title": "PRMS Status Lookup Disambiguation",
         "content": """
 PRMS STATUS DISAMBIGUATION
 
@@ -1223,20 +1255,15 @@ Two separate concepts control entity status — do NOT confuse them:
    (e.g., Active, Inactive, On Hold, Closed).
    The Status table is shared across domains; always filter by ReferenceId.
 
-Rules:
-- "Show active clients"        → WHERE Client.IsActive = 1
-- "Show client status/label"   → JOIN [Status] ON [Client].[StatusId] = [Status].[StatusId]
-                                              AND [Status].[ReferenceId] = 1
-- "Show active projects"       → WHERE Project.IsActive = 1
-- "Show project status/label"  → JOIN [Status] ON [Project].[ProjectStatusId] = [Status].[StatusId]
-                                              AND [Status].[ReferenceId] = 2
+Status ReferenceId values:
+- ReferenceId = 1 → Client status domain (JOIN Status ON Client.StatusId = Status.StatusId AND Status.ReferenceId = 1)
+- ReferenceId = 2 → Project status domain (JOIN Status ON Project.ProjectStatusId = Status.StatusId AND Status.ReferenceId = 2)
+- ReferenceId = 3 → Resource status domain (Active resource: r.IsActive = 1 AND r.StatusId = 8, where StatusId 8 = "Resource - Active")
 
 CRITICAL WARNINGS:
 - Do NOT join using Client.ClientId = Status.ReferenceId — that is wrong.
   Correct join is: Client.StatusId = Status.StatusId
 - Projects use ProjectStatusId (not StatusId) to reference their status.
-- Active resources: r.IsActive = 1 AND r.StatusId = 8
-  (StatusId 8 = "Resource - Active" in the Status table, ReferenceId = 3)
         """.strip(),
     },
     # -------------------------------------------------------------------------
@@ -2527,6 +2554,45 @@ def _upsert_sample_queries(conn, connection_id: UUID) -> None:
     print(f"  Sample Queries: {ok} upserted, {fail} failed")
 
 
+def _chunk_words(text: str, max_words: int = 450, overlap_words: int = 80) -> list[str]:
+    """Split text into overlapping word-based chunks (matches knowledge_service logic)."""
+    words = text.split()
+    if not words:
+        return []
+    if len(words) <= max_words:
+        return [" ".join(words)]
+    chunks: list[str] = []
+    start = 0
+    while start < len(words):
+        end = min(start + max_words, len(words))
+        chunks.append(" ".join(words[start:end]))
+        if end == len(words):
+            break
+        start = max(0, end - overlap_words)
+    return chunks
+
+
+def _get_embedding(conn, text: str) -> list[float] | None:
+    """Generate embedding for a text string using the configured provider.
+
+    Calls the backend's embedding service via a subprocess to reuse the
+    existing provider logic.  Falls back to None on failure.
+    """
+    try:
+        import httpx
+
+        resp = httpx.post(
+            "http://localhost:8000/api/v1/embeddings/generate",
+            json={"text": text},
+            timeout=30.0,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("embedding")
+    except Exception:
+        pass
+    return None
+
+
 def _upsert_knowledge(conn, connection_id: UUID) -> None:
     if not KNOWLEDGE_DOCS:
         print("\n--- Knowledge: nothing to seed (KNOWLEDGE_DOCS is empty) ---")
@@ -2537,6 +2603,19 @@ def _upsert_knowledge(conn, connection_id: UUID) -> None:
     with conn.cursor() as cur:
         for doc in KNOWLEDGE_DOCS:
             try:
+                # Delete existing chunks for this doc (on re-seed)
+                cur.execute(
+                    """
+                    DELETE FROM knowledge_chunks
+                    USING knowledge_documents kd
+                    WHERE knowledge_chunks.document_id = kd.id
+                      AND kd.connection_id = %s
+                      AND kd.title = %s
+                    """,
+                    (str(connection_id), doc["title"]),
+                )
+
+                # Upsert the document
                 cur.execute(
                     """
                     INSERT INTO knowledge_documents
@@ -2546,6 +2625,7 @@ def _upsert_knowledge(conn, connection_id: UUID) -> None:
                         source_url   = EXCLUDED.source_url,
                         content      = EXCLUDED.content,
                         updated_at   = NOW()
+                    RETURNING id
                     """,
                     (
                         str(connection_id),
@@ -2554,12 +2634,46 @@ def _upsert_knowledge(conn, connection_id: UUID) -> None:
                         doc["content"],
                     ),
                 )
+                doc_id = cur.fetchone()[0]
+
+                # Create chunks
+                chunk_texts = _chunk_words(doc["content"])
+                chunk_count = 0
+                for idx, chunk_text in enumerate(chunk_texts):
+                    chunk_id = uuid.uuid4()
+                    cur.execute(
+                        """
+                        INSERT INTO knowledge_chunks
+                            (id, document_id, chunk_index, content, content_hash)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (
+                            str(chunk_id),
+                            str(doc_id),
+                            idx,
+                            chunk_text,
+                            hashlib.md5(
+                                f"{connection_id}:{doc.get('source_url', '')}:{chunk_text}".encode()
+                            ).hexdigest(),
+                        ),
+                    )
+                    chunk_count += 1
+
+                # Update chunk_count on the document
+                cur.execute(
+                    """
+                    UPDATE knowledge_documents SET chunk_count = %s WHERE id = %s
+                    """,
+                    (chunk_count, str(doc_id)),
+                )
+
+                print(f"  {doc['title']}: {chunk_count} chunks created")
                 ok += 1
             except Exception as e:
                 print(f"  ! {doc['title']} — {e}")
                 fail += 1
     print(f"  Knowledge: {ok} upserted, {fail} failed")
-    print("  Note: Run reembed script or trigger embed from UI to generate chunks.")
+    print("  Note: Run reembed script or trigger embed from UI to generate chunk embeddings.")
 
 
 def _upsert_dictionary(conn, connection_id: UUID) -> None:
@@ -2711,8 +2825,49 @@ def _upsert_relationships(conn, connection_id: UUID) -> None:
     )
 
 
+def _purge_connection(conn, connection_id: UUID) -> None:
+    """Delete ALL semantic metadata for a connection (chunks, docs, dicts, glossary, metrics, samples, relationships)."""
+    cid = str(connection_id)
+    print(f"\n--- Purging ALL metadata for connection {cid[:8]}... ---")
+    with conn.cursor() as cur:
+        # Order matters due to FK constraints
+        cur.execute(
+            "DELETE FROM knowledge_chunks USING knowledge_documents kd "
+            "WHERE knowledge_chunks.document_id = kd.id AND kd.connection_id = %s",
+            (cid,),
+        )
+        n_chunks = cur.rowcount
+        cur.execute("DELETE FROM knowledge_documents WHERE connection_id = %s", (cid,))
+        n_docs = cur.rowcount
+        cur.execute("DELETE FROM dictionary_entries WHERE column_id IN (SELECT cc.id FROM cached_columns cc JOIN cached_tables ct ON cc.table_id = ct.id WHERE ct.connection_id = %s)", (cid,))
+        n_dict = cur.rowcount
+        cur.execute("DELETE FROM glossary_terms WHERE connection_id = %s", (cid,))
+        n_glossary = cur.rowcount
+        cur.execute("DELETE FROM metric_definitions WHERE connection_id = %s", (cid,))
+        n_metrics = cur.rowcount
+        cur.execute("DELETE FROM sample_queries WHERE connection_id = %s", (cid,))
+        n_samples = cur.rowcount
+        cur.execute("DELETE FROM cached_relationships WHERE connection_id = %s", (cid,))
+        n_rels = cur.rowcount
+    print(
+        f"  Purged: {n_chunks} chunks, {n_docs} docs, {n_dict} dict entries, "
+        f"{n_glossary} glossary, {n_metrics} metrics, {n_samples} samples, {n_rels} relationships"
+    )
+
+
 def main() -> None:
     env = _load_env()
+
+    # Parse CLI flags
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Seed QueryWise semantic metadata")
+    parser.add_argument(
+        "--purge",
+        action="store_true",
+        help="Delete ALL semantic metadata for the connection before seeding",
+    )
+    args = parser.parse_args()
 
     database_url = env.get("DATABASE_URL")
     if not database_url:
@@ -2743,6 +2898,8 @@ def main() -> None:
     print(f"  Connection ID: {connection_id}")
 
     try:
+        if args.purge:
+            _purge_connection(conn, connection_id)
         _ensure_constraints(conn)
         _upsert_glossary(conn, connection_id)
         _upsert_metrics(conn, connection_id)

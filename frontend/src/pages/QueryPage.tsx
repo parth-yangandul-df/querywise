@@ -208,9 +208,6 @@ function QueryResultView({ result }: { result: QueryResult }) {
           <Accordion.Control>
             <Group>
               <Text fw={500}>SQL</Text>
-              <Badge size="sm" variant="light">
-                {result.execution_time_ms}ms
-              </Badge>
               <Badge size="sm" variant="light" color="gray">
                 {result.row_count} rows
               </Badge>

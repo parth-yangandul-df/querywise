@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import require_role
 from app.api.v1.schemas.schema import (
     AvailableTableEntry,
     ColumnResponse,
@@ -55,7 +55,7 @@ async def introspect_connection(
 async def list_available_tables(
     connection_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("admin")),
 ):
     conn = await get_connection(db, connection_id)
     if conn.connector_type != ConnectorType.SQLSERVER:
@@ -71,7 +71,7 @@ async def list_available_tables(
 async def list_tables(
     connection_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("admin")),
 ):
     tables = await schema_service.get_tables(db, connection_id)
     return [
@@ -96,7 +96,7 @@ async def list_tables(
 async def get_table_detail(
     table_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("admin")),
 ):
     table = await schema_service.get_table_detail(db, table_id)
 
@@ -162,7 +162,7 @@ async def get_table_detail(
 async def list_manual_relationships(
     connection_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("admin")),
 ):
     """Return all is_manual=True relationships for the connection."""
     result = await db.execute(

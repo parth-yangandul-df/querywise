@@ -9,6 +9,9 @@ export interface ChatMessage {
   content?: string;
   result?: QueryResult;
   errorMessage?: string;
+  errorCategory?: string;
+  errorRetryable?: boolean;
+  errorRetryAfterSeconds?: number | null;
 }
 
 export interface QueryResult {
@@ -34,7 +37,7 @@ export interface QueryResult {
 
 export interface QueryStageEvent {
   type: 'stage';
-  stage: 'understanding' | 'generating_sql' | 'running_query' | 'interpreting';
+  stage: string;
   label: string;
   progress: number;
 }
@@ -177,7 +180,14 @@ export class ChatService {
           } else if (event.type === 'result') {
             finalResult = event.data;
           } else if (event.type === 'error') {
-            throw new Error(event.message || 'An error occurred');
+            const err = event as Record<string, unknown>;
+            const errorObj = {
+              message: (err['error'] || err['message'] || 'An error occurred') as string,
+              category: (err['category'] || 'pipeline.unknown') as string,
+              retryable: (err['retryable'] ?? false) as boolean,
+              retryAfterSeconds: (err['retry_after_seconds'] ?? null) as number | null,
+            };
+            throw errorObj;
           }
         }
       }
@@ -194,12 +204,24 @@ export class ChatService {
       // AbortError means the user clicked cancel — no error bubble needed
       if (e instanceof Error && e.name === 'AbortError') {
         this.messages.update(msgs => msgs.filter(m => m.id !== userMsg.id));
+      } else if (typeof e === 'object' && e !== null && 'retryable' in e) {
+        const err = e as Record<string, unknown>;
+        const errorMsgBubble: ChatMessage = {
+          id: `${Date.now()}-error`,
+          role: 'error',
+          errorMessage: err['message'] as string || 'An unexpected error occurred',
+          errorCategory: err['category'] as string,
+          errorRetryable: err['retryable'] as boolean,
+          errorRetryAfterSeconds: err['retryAfterSeconds'] as number | null,
+        };
+        this.messages.update(msgs => [...msgs, errorMsgBubble]);
       } else {
         const errorMsg = e instanceof Error ? e.message : 'An unexpected error occurred';
         const errorMsgBubble: ChatMessage = {
           id: `${Date.now()}-error`,
           role: 'error',
-          errorMessage: errorMsg
+          errorMessage: errorMsg,
+          errorRetryable: false,
         };
         this.messages.update(msgs => [...msgs, errorMsgBubble]);
       }

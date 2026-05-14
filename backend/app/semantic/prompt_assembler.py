@@ -1,5 +1,7 @@
 """Assembles the LLM prompt from selected semantic context."""
 
+import re
+
 from app.semantic.glossary_resolver import (
     ResolvedDictionary,
     ResolvedGlossary,
@@ -9,7 +11,6 @@ from app.semantic.glossary_resolver import (
 )
 from app.semantic.relationship_inference import InferredRelationship
 from app.semantic.schema_linker import LinkedTable
-
 
 # Audit columns that appear on almost every table but are rarely used in queries.
 # Excluding them reduces noise without losing business-relevant context.
@@ -72,23 +73,26 @@ def assemble_prompt(
 
         sections.append("\n".join(schema_lines))
 
+    # Build a unified set of join signatures from inferred relationships.
+    # Used for deduplication in both the declared FK section and the knowledge section.
+    inferred_sigs: set[str] = set()
+    if inferred_relationships:
+        for ir in inferred_relationships:
+            inferred_sigs.add(
+                f"{ir.source_table}.{ir.source_column}->{ir.target_table}.{ir.target_column}"
+            )
+
     # Declared FK relationships section — deduplicate and skip ones that are
     # already covered by inferred relationships (avoids redundant join guidance).
+    unique_rels: list[dict] = []
     if relationships:
-        # Build set of inferred relationship signatures for deduplication
-        inferred_sigs: set[str] = set()
-        if inferred_relationships:
-            for ir in inferred_relationships:
-                inferred_sigs.add(
-                    f"{ir.source_table}.{ir.source_column}->{ir.target_table}.{ir.target_column}"
-                )
-
-        unique_rels: list[dict] = []
         seen_sigs: set[str] = set()
         for rel in relationships:
             sig = f"{rel['source_table']}.{rel['source_column']}->{rel['target_table']}.{rel['target_column']}"
-            # Skip if exact relationship already listed in inferred section
-            if sig in inferred_sigs or sig in seen_sigs:
+            # Also check reverse direction — FK may be stored from parent side
+            reverse_sig = f"{rel['target_table']}.{rel['target_column']}->{rel['source_table']}.{rel['source_column']}"
+            # Skip if exact relationship already listed in inferred section (either direction)
+            if sig in inferred_sigs or reverse_sig in inferred_sigs or sig in seen_sigs:
                 continue
             seen_sigs.add(sig)
             unique_rels.append(rel)
@@ -145,11 +149,38 @@ def assemble_prompt(
                 metric_lines.append(f"    Suggested dimensions: {', '.join(m.dimensions)}")
         sections.append("\n".join(metric_lines))
 
-    # Business knowledge section
+    # Business knowledge section — skip chunks that primarily repeat join rules
+    # already covered in the RELATIONSHIPS section.
     if knowledge:
+        # Build set of table.column join patterns from declared FK relationships
+        join_patterns: set[str] = set()
+        for rel in (relationships or []):
+            join_patterns.add(f"{rel['source_table']}.{rel['source_column']}".lower())
+            join_patterns.add(f"{rel['target_table']}.{rel['target_column']}".lower())
+        if inferred_relationships:
+            for ir in inferred_relationships:
+                join_patterns.add(f"{ir.source_table}.{ir.source_column}".lower())
+                join_patterns.add(f"{ir.target_table}.{ir.target_column}".lower())
+
+        # Also detect FK-style "ON" join clauses in knowledge content
+        _fk_join_re = re.compile(
+            r"\bJOIN\s+\w+\s+ON\s+\w+\.\w+\s*=\s*\w+\.\w+", re.IGNORECASE
+        )
+
         knowledge_lines = ["\n=== BUSINESS KNOWLEDGE ==="]
         knowledge_lines.append("Relevant documentation excerpts:")
+        skipped = 0
         for k in knowledge:
+            content_lower = k.content.lower()
+            # Count how many declared FK join patterns appear in this chunk
+            sig_matches = sum(1 for p in join_patterns if p in content_lower)
+            # Count explicit JOIN ON clauses that repeat FK relationships
+            fk_join_matches = len(_fk_join_re.findall(k.content))
+            # Skip if chunk repeats >=3 declared FK patterns AND has explicit JOIN ON
+            # clauses — it's just duplicating the RELATIONSHIPS section
+            if sig_matches >= 3 and fk_join_matches >= 2:
+                skipped += 1
+                continue
             source = k.title
             if k.source_url:
                 source += f" ({k.source_url})"
@@ -157,6 +188,10 @@ def assemble_prompt(
             text = k.content[:1500] + "..." if len(k.content) > 1500 else k.content
             knowledge_lines.append(f"  {text}")
             knowledge_lines.append("")
+        if skipped:
+            knowledge_lines.append(
+                f"  [{skipped} knowledge chunk(s) skipped — join rules already in RELATIONSHIPS section]"
+            )
         sections.append("\n".join(knowledge_lines))
 
     # Data dictionary section — consolidate duplicate column names into one entry
@@ -230,9 +265,32 @@ def assemble_prompt(
         constraint_lines.append(
             "- Default row limit: SELECT TOP 1000 unless user specifies otherwise"
         )
+        constraint_lines.append(
+            "- DEDUPLICATION: Never use SELECT DISTINCT. "
+            "To remove duplicate rows use GROUP BY with all selected columns instead. "
+            "SELECT DISTINCT causes ODBC driver errors on SQL Server with multi-table JOINs. "
+            "E.g. instead of: SELECT DISTINCT r.ResourceName, p.ProjectName FROM ... "
+            "write: SELECT r.ResourceName, p.ProjectName FROM ..."
+            " GROUP BY r.ResourceName, p.ProjectName"
+        )
+        constraint_lines.append(
+            "- COUNT ACCURACY: When counting entities (e.g. COUNT(*) or COUNT(column)), "
+            "always wrap in a subquery or use COUNT(DISTINCT id_column) to avoid inflated counts "
+            "from JOIN duplicates. "
+            "E.g. 'how many resources know Python' → "
+            "SELECT COUNT(DISTINCT r.ResourceId) FROM Resource r "
+            "JOIN PA_ResourceSkills rs ON rs.ResourceId = r.ResourceId "
+            "JOIN PA_Skills s ON s.SkillId = rs.SkillId WHERE s.SkillName LIKE '%Python%'. "
+            "Never use COUNT(*) directly on a multi-table JOIN without deduplication."
+        )
         if inferred_relationships:
             constraint_lines.append(
                 "- JOIN RULES: Always use the join paths listed in INFERRED RELATIONSHIPS above. "
+                "Never invent an alternative join path when one is provided."
+            )
+        if unique_rels:
+            constraint_lines.append(
+                "- JOIN RULES: Use the join paths listed in RELATIONSHIPS above. "
                 "Never invent an alternative join path when one is provided."
             )
     else:

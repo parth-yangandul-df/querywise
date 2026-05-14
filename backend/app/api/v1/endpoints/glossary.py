@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_role
+from app.api.deps import require_role
 from app.api.v1.schemas.glossary import (
     GlossaryTermCreate,
     GlossaryTermResponse,
@@ -30,7 +30,7 @@ router = APIRouter(tags=["glossary"])
 async def list_glossary_terms(
     connection_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("admin")),
 ):
     result = await db.execute(
         select(GlossaryTerm)
@@ -80,7 +80,7 @@ async def get_glossary_term(
     connection_id: uuid.UUID,
     term_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("admin")),
 ):
     term = await db.get(GlossaryTerm, term_id)
     if not term or term.connection_id != connection_id:

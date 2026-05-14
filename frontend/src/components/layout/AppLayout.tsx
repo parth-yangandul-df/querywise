@@ -39,13 +39,13 @@ function ColorSchemeToggle() {
 
 const NAV_ITEMS = [
   { label: 'Query', path: '/query', icon: IconMessageQuestion },
-  { label: 'Connections', path: '/connections', icon: IconDatabase },
-  { label: 'Glossary', path: '/glossary', icon: IconBook },
-  { label: 'Metrics', path: '/metrics', icon: IconChartBar },
-  { label: 'Dictionary', path: '/dictionary', icon: IconVocabulary },
-  { label: 'Knowledge', path: '/knowledge', icon: IconFileText },
-  { label: 'Sample Queries', path: '/sample-queries', icon: IconListDetails, adminOnly: true },
   { label: 'History', path: '/history', icon: IconHistory },
+  { label: 'Connections', path: '/connections', icon: IconDatabase, adminOnly: true },
+  { label: 'Glossary', path: '/glossary', icon: IconBook, adminOnly: true },
+  { label: 'Metrics', path: '/metrics', icon: IconChartBar, adminOnly: true },
+  { label: 'Dictionary', path: '/dictionary', icon: IconVocabulary, adminOnly: true },
+  { label: 'Knowledge', path: '/knowledge', icon: IconFileText, adminOnly: true },
+  { label: 'Sample Queries', path: '/sample-queries', icon: IconListDetails, adminOnly: true },
   { label: 'Users', path: '/users', icon: IconUsers, adminOnly: true },
 ];
 

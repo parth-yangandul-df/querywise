@@ -92,11 +92,6 @@ export function HistoryPage() {
                     >
                       {q.execution_status}
                     </Badge>
-                    {q.execution_time_ms != null && (
-                      <Badge size="sm" variant="light" color="gray">
-                        {q.execution_time_ms}ms
-                      </Badge>
-                    )}
                     {q.row_count != null && (
                       <Badge size="sm" variant="light" color="gray">
                         {q.row_count} rows

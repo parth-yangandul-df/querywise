@@ -90,6 +90,7 @@ class Settings(BaseSettings):
 
     # Context builder
     max_context_tables: int = 8
+    max_expanded_context_tables: int = 10
     max_sample_queries: int = 3
     embedding_dimension: int = 1536
     similarity_shortcut_threshold: float = 0.85

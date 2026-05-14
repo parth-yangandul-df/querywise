@@ -14,18 +14,12 @@ from app.core.exceptions import AppError
 from app.core.limiter import limiter
 from app.db.models.user import User
 from app.db.session import get_db
+from app.llm.stream_stages import UNDERSTANDING, emit
 from app.services import query_service
 
 router = APIRouter(prefix="/query", tags=["query"])
 logger = logging.getLogger(__name__)
 
-_STREAM_STAGES = [
-    {"stage": "understanding", "label": "Understanding your question...", "progress": 20},
-    {"stage": "generating_sql", "label": "Generating SQL...", "progress": 50},
-    {"stage": "running_query", "label": "Running query...", "progress": 75},
-    {"stage": "interpreting", "label": "Interpreting results...", "progress": 95},
-]
-# Fallback timeline used only when no real stage events are emitted (e.g. errors before first node)
 _STREAM_STAGE_TIMELINE_S = (0.0, 1.5, 3.0, 4.5)
 
 
@@ -79,6 +73,10 @@ async def stream_query(
     async def event_generator():
         event_queue: asyncio.Queue = asyncio.Queue()
 
+        # Emit UNDERSTANDING immediately so the UI shows a stage label
+        # before the graph has even started running (eliminates blank delay).
+        yield _encode_stream_event(emit(UNDERSTANDING))
+
         query_task = asyncio.create_task(
             query_service.execute_nl_query(
                 body.connection_id,
@@ -96,7 +94,7 @@ async def stream_query(
                 try:
                     event = await asyncio.wait_for(event_queue.get(), timeout=0.5)
                     yield _encode_stream_event(event)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
             result = await query_task
@@ -104,14 +102,27 @@ async def stream_query(
 
         except asyncio.CancelledError:
             query_task.cancel()
-            raise
+            logger.debug("Query stream cancelled by client")
+            return
         except AppError as exc:
-            logger.warning("Query error: %s (code=%s)", exc.message, exc.status_code)
+            logger.warning(
+                "Query error: %s (code=%s, category=%s)",
+                exc.message,
+                exc.status_code,
+                exc.category,
+            )
             yield _encode_stream_event(exc.to_stream_event())
         except Exception:
             logger.error("Query stream error", exc_info=True)
             yield _encode_stream_event(
-                {"type": "error", "message": "Something went wrong. Please try again.", "code": 500}
+                {
+                    "type": "error",
+                    "error": "Something went wrong. Please try again.",
+                    "code": 500,
+                    "category": "pipeline.unknown",
+                    "retryable": False,
+                    "retry_after_seconds": None,
+                }
             )
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

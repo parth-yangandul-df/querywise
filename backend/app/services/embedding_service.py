@@ -1,12 +1,15 @@
+import asyncio
 import hashlib
 import json
 import logging
 from collections import OrderedDict
 from collections.abc import Callable
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import EmbeddingError
 from app.core.mlflow_tracing import mlflow_span
 from app.db.models.glossary import GlossaryTerm
 from app.db.models.knowledge import KnowledgeChunk, KnowledgeDocument
@@ -88,7 +91,7 @@ async def embed_text(text: str) -> list[float]:
         return redis_emb
 
     provider = _get_provider()
-    embedding = await provider.generate_embedding(text)
+    embedding = await _embed_with_retry(provider, text)
 
     # Store in both caches
     _EMBEDDING_CACHE[cache_key] = embedding
@@ -98,6 +101,22 @@ async def embed_text(text: str) -> list[float]:
 
     logger.debug("embed_text: cache miss for question=%r", text[:50])
     return embedding
+
+
+async def _embed_with_retry(provider: Any, text: str) -> list[float]:
+    """Generate an embedding with 2-attempt retry and 1.5s timeout.
+
+    Raises EmbeddingError if both attempts fail.
+    """
+    for attempt in range(2):
+        try:
+            return await asyncio.wait_for(provider.generate_embedding(text), timeout=1.5)
+        except TimeoutError:
+            logger.warning("_embed_with_retry timeout attempt %d/2", attempt + 1)
+        except Exception as exc:
+            logger.warning("_embed_with_retry attempt %d/2 failed: %s", attempt + 1, exc)
+    logger.error("_embed_with_retry failed after 2 attempts, using keyword fallback")
+    raise EmbeddingError()
 
 
 async def embed_table(table: CachedTable) -> list[float]:

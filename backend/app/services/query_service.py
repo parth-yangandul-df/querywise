@@ -108,6 +108,9 @@ async def _execute_cached_pipeline(
         logger.warning("Cached query history write failed — non-critical", exc_info=True)
         execution_id = None
 
+    _c_cols, _c_col_types, _c_rows = _drop_null_columns(
+        result.columns, result.column_types, _serialize_rows(result.rows)
+    )
     return {
         "id": execution_id,
         "question": question,
@@ -118,9 +121,9 @@ async def _execute_cached_pipeline(
         "generated_sql": sql,
         "final_sql": sql,
         "explanation": None,
-        "columns": result.columns,
-        "column_types": result.column_types,
-        "rows": _serialize_rows(result.rows),
+        "columns": _c_cols,
+        "column_types": _c_col_types,
+        "rows": _c_rows,
         "row_count": result.row_count,
         "execution_time_ms": result.execution_time_ms,
         "truncated": result.truncated,
@@ -403,6 +406,12 @@ async def execute_nl_query(
     elif final_state.get("error"):
         result_status = "error"
 
+    _cols, _col_types, _rows = _drop_null_columns(
+        result.columns if result else [],
+        result.column_types if result else [],
+        _serialize_rows(result.rows) if result else [],
+    )
+
     result_payload = {
         "id": final_state.get("execution_id"),
         "question": question,
@@ -413,9 +422,9 @@ async def execute_nl_query(
         "generated_sql": final_state.get("generated_sql"),
         "final_sql": final_state.get("sql"),
         "explanation": final_state.get("explanation"),
-        "columns": result.columns if result else [],
-        "column_types": result.column_types if result else [],
-        "rows": _serialize_rows(result.rows) if result else [],
+        "columns": _cols,
+        "column_types": _col_types,
+        "rows": _rows,
         "row_count": result.row_count if result else 0,
         "execution_time_ms": result.execution_time_ms if result else None,
         "truncated": result.truncated if result else False,
@@ -552,6 +561,37 @@ async def execute_raw_sql(
         "llm_model": llm_model_name,
         "retry_count": 0,
     }
+
+
+def _drop_null_columns(
+    columns: list[str],
+    column_types: list[str],
+    rows: list[list],
+) -> tuple[list[str], list[str], list[list]]:
+    """Remove columns where every row value is None/null.
+
+    Keeps columns that have at least one non-None value across all rows.
+    Returns filtered (columns, column_types, rows).
+    """
+    if not rows or not columns:
+        return columns, column_types, rows
+
+    keep: list[int] = [
+        i
+        for i, _ in enumerate(columns)
+        if any(row[i] is not None for row in rows)
+    ]
+
+    if len(keep) == len(columns):
+        return columns, column_types, rows  # nothing to drop
+
+    dropped = [columns[i] for i in range(len(columns)) if i not in keep]
+    logger.debug("_drop_null_columns: dropping all-null columns %s", dropped)
+
+    filtered_cols = [columns[i] for i in keep]
+    filtered_types = [column_types[i] for i in keep] if column_types else []
+    filtered_rows = [[row[i] for i in keep] for row in rows]
+    return filtered_cols, filtered_types, filtered_rows
 
 
 def _serialize_rows(rows: list[list]) -> list[list]:

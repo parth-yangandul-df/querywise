@@ -1,0 +1,10 @@
+First model selection was deepseek 3.2, the model was powerful enough to solve text2sql but the speed and latency was too high. The whole query pipeline would take 60+s. 
+
+Shifted to a combination of Models:
+1. gpt 4.1 nano for simple question including >5 tables
+2. qwen 3 32b:nitro for moderate to complex questions inclusing 15+ table joins
+3. Earlier we had deepseek v4 flash, which was 10x cheaper but 20x slower than qwen 3 32b. so we have traded latency over cost.
+
+both models are significantly fast, and response time reduced to 8-15s depending on cold starts and complexity of the queries
+
+although best model right now is qwen 3.

@@ -12,6 +12,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_user
 from app.config import settings
 from app.core.limiter import limiter
 from app.db.models.user import User
@@ -132,6 +133,20 @@ async def login(
         role=user.role,
         resource_id=user.resource_id,
         employee_id=user.employee_id,
+    )
+
+
+@router.get("/me", response_model=LoginResponse)
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user),
+) -> LoginResponse:
+    """Return current user info. Used by the frontend to verify cookie validity on boot."""
+    return LoginResponse(
+        access_token="",
+        email=current_user.email,
+        role=current_user.role,
+        resource_id=current_user.resource_id,
+        employee_id=current_user.employee_id,
     )
 
 
