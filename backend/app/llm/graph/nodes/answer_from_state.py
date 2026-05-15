@@ -1,6 +1,5 @@
-"""answer_from_state node — handles show_sql and explain_result without DB execution.
+"""answer_from_state node — handles explain_result without DB execution.
 
-show_sql: returns the last generated SQL directly from loaded state.
 explain_result: makes one LLM call grounded in the stored result preview to explain
                 why specific rows appeared, what patterns exist, etc.
 """
@@ -11,6 +10,7 @@ from typing import Any
 from app.llm.base_provider import LLMMessage
 from app.llm.graph.state import GraphState
 from app.llm.router import route_for_role
+from app.llm.stream_stages import INTERPRETING, emit
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +29,6 @@ async def answer_from_state(state: GraphState) -> dict[str, Any]:
     """Return an answer from loaded state without executing any SQL."""
     action = state.get("action")
 
-    if action == "show_sql":
-        return await _handle_show_sql(state)
     if action == "explain_result":
         return await _handle_explain_result(state)
 
@@ -40,38 +38,6 @@ async def answer_from_state(state: GraphState) -> dict[str, Any]:
         "highlights": [],
         "suggested_followups": [],
         "error": f"Unknown action: {action}",
-    }
-
-
-async def _handle_show_sql(state: GraphState) -> dict[str, Any]:
-    sql = state.get("last_generated_sql")
-    if not sql:
-        return {
-            "answer": None,
-            "highlights": [],
-            "suggested_followups": [],
-            "clarification_reason": "missing_previous_sql",
-            "clarification_message": "I don't have a previous SQL query to show. Try running a query first.",
-            "clarification_options": [],
-            "action": "clarification",
-        }
-
-    if state.get("event_queue"):
-        await state["event_queue"].put(
-            {
-                "type": "stage",
-                "stage": "understanding",
-                "label": "Retrieving previous SQL...",
-                "progress": 90,
-            }
-        )
-
-    return {
-        "answer": f"```sql\n{sql}\n```",
-        "generated_sql": sql,
-        "sql": sql,
-        "highlights": [],
-        "suggested_followups": [],
     }
 
 
@@ -86,20 +52,15 @@ async def _handle_explain_result(state: GraphState) -> dict[str, Any]:
             "highlights": [],
             "suggested_followups": [],
             "clarification_reason": "missing_previous_result",
-            "clarification_message": "I don't have a previous result to explain. Try running a query first.",
+            "clarification_message": (
+                "I don't have a previous result to explain. Try running a query first."
+            ),
             "clarification_options": [],
-            "action": "clarification",
+"action": "clarification",
         }
 
     if state.get("event_queue"):
-        await state["event_queue"].put(
-            {
-                "type": "stage",
-                "stage": "interpreting",
-                "label": "Interpreting results...",
-                "progress": 80,
-            }
-        )
+        await state.get("event_queue").put(emit(INTERPRETING))
 
     # Format a compact preview table
     preview_text = _format_preview(columns, preview_rows)
@@ -125,6 +86,17 @@ async def _handle_explain_result(state: GraphState) -> dict[str, Any]:
         else:
             response = await provider.complete(messages, llm_config)
             explanation = response.content
+
+            # Track token usage and cost in MLflow
+            from app.core.mlflow_tracing import set_mlflow_llm_cost
+
+            set_mlflow_llm_cost(
+                model=response.model,
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                cost_usd=response.cost_usd,
+                provider=provider.provider_type.value,
+            )
     except Exception:
         logger.warning("answer_from_state: explain_result LLM call failed", exc_info=True)
         explanation = "I was unable to explain the result at this time."

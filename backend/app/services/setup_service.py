@@ -700,6 +700,10 @@ async def auto_setup_sample_db() -> None:
                         await db.commit()
                         # Refresh to get updated last_introspected_at
                         await db.refresh(connection)
+                        # Invalidate any stale schema cache so the next query
+                        # picks up the freshly introspected metadata.
+                        from app.services.schema_cache import invalidate_schema_cache
+                        await invalidate_schema_cache(connection_id)
                         logger.info("Auto-setup: schema introspected successfully")
                     else:
                         logger.info("Auto-setup: schema already introspected, skipping")

@@ -1,13 +1,14 @@
 import logging
+import re
 import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_optional_user, require_role
+from app.api.deps import require_role
 from app.core.exceptions import NotFoundError
 from app.db.models.sample_query import SampleQuery
 from app.db.models.user import User
@@ -18,6 +19,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["sample_queries"])
 
+_SQL_NORMALIZER = re.compile(r"[\x00-\x08\x0b\x0c\x1a\x1b]")  # strip BEL, BS, VT, FF, SUB, ESC
+
+
+def _normalize_sql(sql: str) -> str:
+    sql = _SQL_NORMALIZER.sub("", sql)
+    sql = sql.replace("\r\n", "\n").replace("\r", "\n")
+    sql = re.sub(r"[ \t]+", " ", sql)
+    sql = re.sub(r"\n{3,}", "\n\n", sql)
+    return sql.strip()
+
 
 class SampleQueryCreate(BaseModel):
     natural_language: str = Field(min_length=1)
@@ -26,6 +37,11 @@ class SampleQueryCreate(BaseModel):
     tags: list[str] = Field(default_factory=list)
     is_validated: bool = False
 
+    @field_validator("sql_query")
+    @classmethod
+    def _normalize_sql_query(cls, v: str) -> str:
+        return _normalize_sql(v)
+
 
 class SampleQueryUpdate(BaseModel):
     natural_language: str | None = Field(default=None, min_length=1)
@@ -33,6 +49,13 @@ class SampleQueryUpdate(BaseModel):
     description: str | None = None
     tags: list[str] | None = None
     is_validated: bool | None = None
+
+    @field_validator("sql_query")
+    @classmethod
+    def _normalize_sql_update(cls, v: str | None) -> str | None:
+        if v is not None:
+            return _normalize_sql(v)
+        return v
 
 
 class SampleQueryResponse(BaseModel):
@@ -56,7 +79,7 @@ class SampleQueryResponse(BaseModel):
 async def list_sample_queries(
     connection_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(require_role("admin")),
 ):
     result = await db.execute(
         select(SampleQuery)

@@ -1,89 +1,82 @@
-"""LangSmith tracing utilities for QueryWise.
+"""Tracing utilities — MLflow-backed spans for LLM agents.
 
-This module provides LangSmith integration for observability:
-- Automatic tracing of LLM calls with rich metadata
-- Trace context propagation through the query pipeline
-- Configurable via LANGSMITH_API_KEY, LANGSMITH_PROJECT, LANGSMITH_TRACING_ENABLED
+Replaces the old LangSmith no-op stubs with real MLflow spans.
+All functions remain backward-compatible so existing import sites
+don't need changes.
 """
 
-from functools import wraps
-from typing import Any, TypeVar
+from __future__ import annotations
 
-from app.config import settings
-
-T = TypeVar("T")
-
-_langsmith_configured: bool = False
+import contextlib
+import functools
+from collections.abc import Iterator
+from typing import Any
 
 
-def _ensure_langsmith_configured() -> bool:
-    """Ensure LangSmith is configured and return whether it's ready."""
-    global _langsmith_configured
-    if _langsmith_configured:
-        return True
-
-    if not settings.langsmith_tracing_enabled or not settings.langsmith_api_key:
-        return False
-
+def is_traced_run() -> bool:
+    """Returns True when MLflow tracing is active."""
     try:
-        from langsmith.client import Client  # type: ignore[import-not-found]
+        import mlflow  # noqa: PLC0415
 
-        Client.configure(
-            api_key=settings.langsmith_api_key,
-            project=settings.langsmith_project,
-        )
-        _langsmith_configured = True
-        return True
+        return mlflow.get_current_active_span() is not None
     except Exception:
         return False
+
+
+def configure_langsmith() -> bool:
+    """No-op — LangSmith has been removed."""
+    return False
+
+
+@contextlib.contextmanager
+def trace_span(
+    name: str,
+    *,
+    run_type: str = "chain",
+    inputs: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+    force: bool = False,
+) -> Iterator[None]:
+    """No-op span context manager (synchronous callers)."""
+    yield None
+
+
+@contextlib.contextmanager
+def trace_graph_run(
+    name: str,
+    *,
+    inputs: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Iterator[None]:
+    """No-op graph run context manager."""
+    yield None
 
 
 def traceable(
     name: str | None = None,
     run_name: str | None = None,
+    span_type: str = "CHAIN",
 ) -> Any:
-    """Decorator to add LangSmith tracing to async functions.
+    """Decorator that wraps an async method as a named MLflow span.
 
-    Args:
-        name: Trace name (defaults to function's qualified name)
-        run_name: Custom run name for the trace
-
-    Returns:
-        Decorated function with LangSmith tracing
-
-    Example:
-        @traceable("compose_sql")
-        async def compose_sql(...):
-            ...
+    Drop-in replacement for the old LangSmith ``@traceable`` no-op.
+    Falls back to calling the function untraced when MLflow is unavailable.
     """
 
     def decorator(func: Any) -> Any:
-        from langsmith import traceable as langsmith_traceable
+        span_name = name or run_name or func.__name__
 
-        trace_name = name or f"{func.__module__}.{func.__qualname__}"
-        run_name_final = run_name or func.__name__
+        @functools.wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                import mlflow  # noqa: PLC0415
 
-        @wraps(func)
-        async def async_wrapper(*args: Any, **kwargs: Any) -> T:
-            if not _ensure_langsmith_configured():
+                with mlflow.start_span(name=span_name, span_type=span_type):
+                    return await func(*args, **kwargs)
+            except Exception:
                 return await func(*args, **kwargs)
 
-            with langsmith_traceable(run_name=run_name_final, name=trace_name) as cb:
-                try:
-                    result = await func(*args, **kwargs)
-                    cb.end(
-                        outputs={"result": _serialize_for_trace(result)},
-                        metadata={"success": True},
-                    )
-                    return result
-                except Exception as e:
-                    cb.end(
-                        outputs={"error": str(e)},
-                        metadata={"success": False, "error_type": type(e).__name__},
-                    )
-                    raise
-
-        return async_wrapper
+        return wrapper
 
     return decorator
 
@@ -93,55 +86,7 @@ def trace_llm_call(
     model: str,
     operation: str,
     metadata: dict[str, Any] | None = None,
+    force: bool = False,
 ) -> Any:
-    """Context manager for tracing LLM calls with detailed metadata.
-
-    Args:
-        provider: LLM provider (anthropic, openai, openrouter, groq, ollama)
-        model: Model identifier
-        operation: Operation type (complete, stream, embed)
-        metadata: Additional metadata for the trace
-
-    Returns:
-        Context manager for the trace
-
-    Example:
-        with trace_llm_call("openrouter", "deepseek/deepseek-v3.2", "complete") as cb:
-            response = await provider.complete(messages, config)
-            cb.end(outputs={"response": response.content})
-    """
-    if not _ensure_langsmith_configured():
-        import contextlib
-
-        return contextlib.nullcontext()
-
-    from langsmith import traceable as langsmith_traceable
-
-    trace_name = f"{provider}.{operation}.{model}"
-    meta = {
-        "provider": provider,
-        "model": model,
-        "operation": operation,
-        **(metadata or {}),
-    }
-
-    return langsmith_traceable(name=trace_name, metadata=meta)
-
-
-def serialize_messages_for_trace(messages: list[Any]) -> list[dict[str, str]]:
-    """Serialize LLM messages for trace output (truncated for privacy)."""
-    serialized = []
-    for msg in messages:
-        if hasattr(msg, "role") and hasattr(msg, "content"):
-            content = msg.content
-            if len(content) > 500:
-                content = content[:500] + "... [truncated]"
-            serialized.append({"role": msg.role, "content": content})
-    return serialized
-
-
-def _serialize_for_trace(obj: Any) -> Any:
-    """Serialize objects for LangSmith trace output."""
-    if hasattr(obj, "__dict__"):
-        return {k: v for k, v in vars(obj).items() if not k.startswith("_")}
-    return str(obj)
+    """No-op context manager for LLM call tracing."""
+    return contextlib.nullcontext()

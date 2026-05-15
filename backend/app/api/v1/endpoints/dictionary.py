@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_optional_user, require_role
+from app.api.deps import require_role
 from app.api.v1.schemas.dictionary import (
     DictionaryEntryCreate,
     DictionaryEntryResponse,
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/columns/{column_id}/dictionary", tags=["dictionary"]
 async def list_dictionary_entries(
     column_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(require_role("admin")),
 ):
     result = await db.execute(
         select(DictionaryEntry)

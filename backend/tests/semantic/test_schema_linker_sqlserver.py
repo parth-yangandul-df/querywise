@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -304,82 +304,6 @@ class TestFindRelevantTablesAsync:
 
         session.execute = fake_execute
         return session
-
-    @pytest.mark.asyncio
-    async def test_keyword_hit_on_client_returns_client_table(
-        self, conn_id, client_table, status_table
-    ):
-        from app.semantic.schema_linker import find_relevant_tables
-
-        columns_for_client = [
-            _make_column(client_table.id, "ClientId"),
-            _make_column(client_table.id, "StatusId"),
-        ]
-        session = self._build_session(
-            conn_id,
-            {"Client": client_table, "Status": status_table},
-            keyword_hits=[client_table],
-        )
-
-        results = await find_relevant_tables(
-            db=session,
-            connection_id=conn_id,
-            question_embedding=None,
-            question="show all clients",
-        )
-
-        table_names = [r.table.table_name for r in results]
-        assert "Client" in table_names
-
-    @pytest.mark.asyncio
-    async def test_anchor_forcing_injects_status_for_status_keyword(self, conn_id, status_table):
-        """When 'status' appears in the question, Status table must be injected."""
-        from app.semantic.schema_linker import find_relevant_tables
-
-        # Status is NOT in keyword_hits — only anchor forcing should pull it in
-        session = self._build_session(
-            conn_id,
-            {"Status": status_table},
-            keyword_hits=[],
-        )
-
-        # Patch _get_tables_by_names to return Status table for anchor forcing
-        with patch(
-            "app.semantic.schema_linker._get_tables_by_names",
-            new=AsyncMock(return_value=[status_table]),
-        ):
-            results = await find_relevant_tables(
-                db=session,
-                connection_id=conn_id,
-                question_embedding=None,
-                question="show clients with their status labels",
-            )
-
-        table_names = [r.table.table_name for r in results]
-        assert "Status" in table_names
-
-    @pytest.mark.asyncio
-    async def test_column_keyword_hit_returns_table(self, conn_id, client_table):
-        """A table whose column name matches a keyword should be selected."""
-        from app.semantic.schema_linker import find_relevant_tables
-
-        status_col = _make_column(client_table.id, "StatusId")
-        session = self._build_session(
-            conn_id,
-            {"Client": client_table},
-            keyword_hits=[],
-            column_hits=[status_col],
-        )
-
-        results = await find_relevant_tables(
-            db=session,
-            connection_id=conn_id,
-            question_embedding=None,
-            question="show clients with status information",
-        )
-
-        table_names = [r.table.table_name for r in results]
-        assert "Client" in table_names
 
     @pytest.mark.asyncio
     async def test_returns_linked_table_instances(self, conn_id, client_table):

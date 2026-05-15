@@ -1,52 +1,41 @@
 # QueryWise Documentation Index
 
-Welcome to QueryWise! This document provides an index of all available documentation to help you get started.
+This is the curated documentation set for the current codebase. If two documents overlap, prefer the files listed here.
 
----
+## Start here
 
-## For New Developers
+| Document | Use it for |
+|---|---|
+| [../README.md](../README.md) | Project overview and fastest path to first run |
+| [./onboarding-guide.md](./onboarding-guide.md) | Local setup and day-one developer workflow |
+| [./QA_TESTING.md](./QA_TESTING.md) | Current manual QA scenarios |
 
-| Document | Purpose |
-|----------|---------|
-| [README.md](../README.md) | Quick overview and quick start |
-| [docs/onboarding-guide.md](./onboarding-guide.md) | Full setup walkthrough |
-| [docs/QA_TESTING.md](./QA_TESTING.md) | Test scenarios for QA |
+## Architecture and design
 
-## For Understanding Architecture
+| Document | Use it for |
+|---|---|
+| [./01-system-architecture-and-execution-flow.md](./01-system-architecture-and-execution-flow.md) | End-to-end request flow and LangGraph topology |
+| [./02-components-agents-and-tooling.md](./02-components-agents-and-tooling.md) | Ownership map of the major backend and frontend components |
+| [./03-data-and-interface-contracts.md](./03-data-and-interface-contracts.md) | Database entities, API contracts, and stream event shapes |
+| [./04-operations-behavior-and-limitations.md](./04-operations-behavior-and-limitations.md) | Runtime behavior, health checks, feature flags, and known limits |
+| [./semantic-layer.md](./semantic-layer.md) | How context retrieval and semantic metadata work |
+| [./rbac-design.md](./rbac-design.md) | Authentication, authorization, and scoped querying |
+| [./TECH_STACK.md](./TECH_STACK.md) | Concise stack reference |
 
-| Document | Purpose |
-|----------|---------|
-| [docs/01-system-architecture-and-execution-flow.md](./01-system-architecture-and-execution-flow.md) | System design and data flow |
-| [docs/02-components-agents-and-tooling.md](./02-components-agents-and-tooling.md) | Components and agents technical details |
-| [docs/03-data-and-interface-contracts.md](./03-data-and-interface-contracts.md) | Database schema and API contracts |
-| [docs/04-operations-behavior-and-limitations.md](./04-operations-behavior-and-limitations.md) | Operational limits |
+## UI-specific docs
 
-## For Specific Features
+| Document | Use it for |
+|---|---|
+| [../frontend/README.md](../frontend/README.md) | React admin UI development |
+| [../angular-test/README.md](../angular-test/README.md) | Angular chat UI development |
 
-| Document | Purpose |
-|----------|---------|
-| [docs/semantic-layer.md](./semantic-layer.md) | How the semantic layer works |
-| [docs/context-awareness.md](./context-awareness.md) | Multi-turn conversation handling |
-| [docs/rbac-design.md](./rbac-design.md) | Role-based access control |
+## Operational quick links
 
-## For UI/UX
+- Health: `http://localhost:8000/api/v1/health`
+- Ready: `http://localhost:8000/api/v1/ready`
+- OpenAPI: `http://localhost:8000/docs`
+- Embedding progress: `http://localhost:8000/api/v1/embeddings/status`
 
-| Document | Purpose |
-|----------|---------|
-| [docs/ui-design.md](./ui-design.md) | Frontend design decisions |
-| [docs/arch.md](./arch.md) | Architecture deep dive |
+## Notes on removed docs
 
-## For Troubleshooting
-
-- **Health checks:** `curl http://localhost:8000/api/v1/health`
-- **API docs:** `http://localhost:8000/docs`
-- **Backend logs:** `docker compose logs -f backend`
-
----
-
-## Quick Links
-
-- **Frontend:** http://localhost:5173
-- **Angular Chat:** http://localhost:4200
-- **Backend API:** http://localhost:8000
-- **API Docs:** http://localhost:8000/docs
+Off-topic prompt dumps and generic architecture notes have been removed from `docs/`. Root-level legacy test banks are still present, but the canonical QA source is [./QA_TESTING.md](./QA_TESTING.md).

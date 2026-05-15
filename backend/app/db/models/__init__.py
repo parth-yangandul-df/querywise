@@ -1,3 +1,4 @@
+from app.db.models.audit_log import AuditLog
 from app.db.models.chat_session import ChatSession
 from app.db.models.connection import DatabaseConnection
 from app.db.models.dictionary import DictionaryEntry
@@ -10,6 +11,7 @@ from app.db.models.schema_cache import CachedColumn, CachedRelationship, CachedT
 from app.db.models.user import User
 
 __all__ = [
+    "AuditLog",
     "ChatSession",
     "DatabaseConnection",
     "CachedTable",

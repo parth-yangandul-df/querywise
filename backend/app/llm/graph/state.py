@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from typing_extensions import TypedDict
 
 from app.connectors.base_connector import QueryResult
@@ -19,7 +19,7 @@ class GraphState(TypedDict):
     connection_string: str
     timeout_seconds: int
     max_rows: int
-    db: AsyncSession  # SQLAlchemy async session (not serialized)
+    db: async_sessionmaker  # SQLAlchemy session factory — nodes open their own short-lived sessions
     session_id: str | None  # UUID as str — chat thread identifier
 
     # ── Auth / RBAC ──────────────────────────────────────────────────────
@@ -33,10 +33,17 @@ class GraphState(TypedDict):
     last_generated_sql: str | None  # SQL from the most recent successful query turn
     last_result_columns: list[str] | None
     last_result_preview_rows: list[list] | None  # max 20 rows from last successful query
+    # Compact follow-up context: resolved_question, sql, answer,
+    # columns, preview, status
+    last_query_context: dict | None
 
     # ── Turn resolution (set by resolve_turn node) ───────────────────────
-    action: str | None  # "query" | "clarification" | "show_sql" | "explain_result"
+    # "query" | "clarification" | "explain_result" |
+    # "follow_up_query_refinement" | "show_schema"
+    action: str | None
     resolved_question: str | None  # standalone rewritten question for build_context
+    follow_up_mode: str | None  # "reuse_answer" | "rewrite_sql" | "needs_full_compose"
+    follow_up_reason: str | None
     clarification_reason: str | None
     clarification_message: str | None
     clarification_options: list[str]
@@ -48,12 +55,17 @@ class GraphState(TypedDict):
 
     # ── Similarity shortcut (set by similarity_check node) ────────────────
     similarity_shortcut: bool  # True if a validated sample query matched
+    similarity_hint_sql: str | None  # FIX #1: SQL from similar query, used as hint to composer
 
     # ── SQL generation pipeline (compose → validate → handle_error cycle) ─
     generated_sql: str | None
     validation_issues: list[str]  # empty = valid; non-empty = re-route to handle_error
+    # FIX #2: Context rebuild for schema mismatches
+    needs_context_rebuild: bool  # True when validation detected missing tables
+    force_include_tables: list[str]  # Tables to force-include in context rebuild
     previous_attempts: list[str]  # all SQL strings tried in this turn
     retry_count: int
+    compose_retry_count: int  # counts empty-SQL retries before giving up
 
     # ── Execution (set by execute_sql node) ───────────────────────────────
     sql: str | None

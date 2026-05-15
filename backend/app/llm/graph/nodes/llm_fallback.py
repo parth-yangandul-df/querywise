@@ -22,6 +22,7 @@ from app.llm.agents.query_composer import QueryComposerAgent
 from app.llm.agents.sql_validator import SQLValidatorAgent, ValidationStatus
 from app.llm.graph.state import GraphState
 from app.llm.router import route
+from app.llm.stream_stages import GENERATING_SQL, RUNNING_QUERY, emit
 from app.semantic.context_builder import build_context
 
 logger = logging.getLogger(__name__)
@@ -92,14 +93,7 @@ async def llm_fallback(state: GraphState) -> dict[str, Any]:
     )
 
     if state.get("event_queue"):
-        await state["event_queue"].put(
-            {
-                "type": "stage",
-                "stage": "generating_sql",
-                "label": "Generating SQL...",
-                "progress": 40,
-            }
-        )
+        await state["event_queue"].put(emit(GENERATING_SQL))
 
     from app.services.connection_service import get_connection
 
@@ -109,24 +103,21 @@ async def llm_fallback(state: GraphState) -> dict[str, Any]:
     context = await build_context(db, connection_id, resolved_question, dialect=conn.connector_type)
     provider, llm_config = route(resolved_question)
 
-    # Inject scope constraint for 'user' role (resource_id or employee_id is set)
+    # Inject scope constraints only for 'user' role.
+    # admin has no constraints; manager has resource_id/employee_id for identification
+    # but is NOT subject to personal-data scope limits.
     prompt_context = context.prompt_context
-    if resource_id is not None:
-        scope_block = _SCOPE_CONSTRAINT_TEMPLATE.format(resource_id=resource_id)
-        prompt_context = scope_block + prompt_context
-    if employee_id is not None:
-        emp_scope_block = _EMPLOYEE_ID_SCOPE_TEMPLATE.format(employee_id=employee_id)
-        prompt_context = emp_scope_block + prompt_context
+    user_role = state.get("user_role")
+    if user_role == "user":
+        if resource_id is not None:
+            scope_block = _SCOPE_CONSTRAINT_TEMPLATE.format(resource_id=resource_id)
+            prompt_context = scope_block + prompt_context
+        if employee_id is not None:
+            emp_scope_block = _EMPLOYEE_ID_SCOPE_TEMPLATE.format(employee_id=employee_id)
+            prompt_context = emp_scope_block + prompt_context
 
     if state.get("event_queue"):
-        await state["event_queue"].put(
-            {
-                "type": "stage",
-                "stage": "generating_sql",
-                "label": "Generating SQL...",
-                "progress": 60,
-            }
-        )
+        await state["event_queue"].put(emit(GENERATING_SQL))
 
     composer = QueryComposerAgent(provider, llm_config)
     composer_output = await composer.compose(
@@ -140,7 +131,8 @@ async def llm_fallback(state: GraphState) -> dict[str, Any]:
 
     # If the LLM signalled it cannot scope the query, return a clean refusal
     if (
-        (resource_id is not None or employee_id is not None)
+        user_role == "user"
+        and (resource_id is not None or employee_id is not None)
         and generated_sql
         and "SCOPE_VIOLATION" in generated_sql.upper()
     ):
@@ -214,9 +206,7 @@ async def llm_fallback(state: GraphState) -> dict[str, Any]:
     )
 
     if state.get("event_queue"):
-        await state["event_queue"].put(
-            {"type": "stage", "stage": "running_query", "label": "Running query...", "progress": 75}
-        )
+        await state["event_queue"].put(emit(RUNNING_QUERY))
 
     try:
         result = await connector.execute_query(

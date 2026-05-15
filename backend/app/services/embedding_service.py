@@ -1,11 +1,16 @@
+import asyncio
 import hashlib
+import json
 import logging
 from collections import OrderedDict
 from collections.abc import Callable
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import EmbeddingError
+from app.core.mlflow_tracing import mlflow_span
 from app.db.models.glossary import GlossaryTerm
 from app.db.models.knowledge import KnowledgeChunk, KnowledgeDocument
 from app.db.models.metric import MetricDefinition
@@ -17,13 +22,16 @@ logger = logging.getLogger(__name__)
 _provider = None
 
 _EMBEDDING_CACHE: OrderedDict[str, list[float]] = OrderedDict()
-_EMBEDDING_CACHE_MAX_SIZE = 100
+_EMBEDDING_CACHE_MAX_SIZE = 500
+_EMBEDDING_REDIS_TTL = 86400  # 24 hours
 
 
 def _get_provider():
+    """Get or create the embedding provider singleton."""
     global _provider
     if _provider is None:
         from app.llm.provider_registry import get_embedding_provider
+
         _provider = get_embedding_provider()
     return _provider
 
@@ -32,35 +40,96 @@ def _hash_text(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+async def _get_redis_embedding(cache_key: str) -> list[float] | None:
+    """Fetch embedding from Redis L2 cache."""
+    try:
+        from app.core.redis import get_redis
+
+        redis = await get_redis()
+        raw = await redis.get(f"emb:{cache_key}")
+        if raw:
+            return json.loads(raw)
+    except Exception:
+        logger.debug("Redis embedding cache read failed — non-critical", exc_info=True)
+    return None
+
+
+async def _set_redis_embedding(cache_key: str, embedding: list[float]) -> None:
+    """Store embedding in Redis L2 cache."""
+    try:
+        from app.core.redis import get_redis
+
+        redis = await get_redis()
+        await redis.setex(f"emb:{cache_key}", _EMBEDDING_REDIS_TTL, json.dumps(embedding))
+    except Exception:
+        logger.debug("Redis embedding cache write failed — non-critical", exc_info=True)
+
+
+@mlflow_span("embed_text", span_type="EMBEDDING", capture_output=False)
 async def embed_text(text: str) -> list[float]:
     """Generate an embedding vector for the given text.
-    
-    Uses an in-memory LRU cache for repeated questions (e.g., re-stated queries,
-    multi-turn follow-ups with similar wording).
+
+    Uses a two-tier cache:
+    1. In-memory LRU (L1) — per-process, fastest
+    2. Redis (L2) — shared across all instances/workers
     """
     cache_key = _hash_text(text)
-    
+
+    # L1: in-memory LRU
     if cache_key in _EMBEDDING_CACHE:
         _EMBEDDING_CACHE.move_to_end(cache_key)
-        logger.debug("embed_text: cache hit for question=%r", text[:50])
+        logger.debug("embed_text: L1 cache hit for question=%r", text[:50])
         return _EMBEDDING_CACHE[cache_key]
-    
+
+    # L2: Redis shared cache
+    redis_emb = await _get_redis_embedding(cache_key)
+    if redis_emb is not None:
+        _EMBEDDING_CACHE[cache_key] = redis_emb
+        if len(_EMBEDDING_CACHE) > _EMBEDDING_CACHE_MAX_SIZE:
+            _EMBEDDING_CACHE.popitem(last=False)
+        logger.debug("embed_text: L2 cache hit for question=%r", text[:50])
+        return redis_emb
+
     provider = _get_provider()
-    embedding = await provider.generate_embedding(text)
-    
+    embedding = await _embed_with_retry(provider, text)
+
+    # Store in both caches
     _EMBEDDING_CACHE[cache_key] = embedding
     if len(_EMBEDDING_CACHE) > _EMBEDDING_CACHE_MAX_SIZE:
         _EMBEDDING_CACHE.popitem(last=False)
-    
+    await _set_redis_embedding(cache_key, embedding)
+
     logger.debug("embed_text: cache miss for question=%r", text[:50])
     return embedding
 
 
-async def embed_table(table: CachedTable) -> list[float]:
-    """Generate an embedding for a table's description."""
+async def _embed_with_retry(provider: Any, text: str) -> list[float]:
+    """Generate an embedding with 2-attempt retry and 1.5s timeout.
+
+    Raises EmbeddingError if both attempts fail.
+    """
+    for attempt in range(2):
+        try:
+            return await asyncio.wait_for(provider.generate_embedding(text), timeout=1.5)
+        except TimeoutError:
+            logger.warning("_embed_with_retry timeout attempt %d/2", attempt + 1)
+        except Exception as exc:
+            logger.warning("_embed_with_retry attempt %d/2 failed: %s", attempt + 1, exc)
+    logger.error("_embed_with_retry failed after 2 attempts, using keyword fallback")
+    raise EmbeddingError()
+
+
+async def embed_table(table: CachedTable, columns: list[CachedColumn] | None = None) -> list[float]:
+    """Generate an embedding for a table including its full column context."""
     text = f"{table.schema_name}.{table.table_name}"
+    if columns:
+        col_parts = [
+            f"{c.column_name}({c.data_type}{' PK' if c.is_primary_key else ''})"
+            for c in columns
+        ]
+        text += ": [" + ", ".join(col_parts) + "]"
     if table.comment:
-        text += f": {table.comment}"
+        text += f" -- {table.comment}"
     return await embed_text(text)
 
 
@@ -182,24 +251,25 @@ async def generate_embeddings_for_connection(
     )
     tables = result.scalars().all()
     for table in tables:
-        table.description_embedding = await embed_table(table)
+        # Load ALL columns for enriched table embedding
+        col_result = await db.execute(
+            select(CachedColumn)
+            .where(CachedColumn.table_id == table.id)
+            .order_by(CachedColumn.ordinal_position)
+        )
+        all_columns = list(col_result.scalars().all())
+        table.description_embedding = await embed_table(table, all_columns)
         count += 1
         if on_progress:
             on_progress()
 
-        # Columns of this table
-        col_result = await db.execute(
-            select(CachedColumn).where(
-                CachedColumn.table_id == table.id,
-                CachedColumn.description_embedding.is_(None),
-            )
-        )
-        columns = col_result.scalars().all()
-        for col in columns:
-            col.description_embedding = await embed_column(col, table.table_name)
-            count += 1
-            if on_progress:
-                on_progress()
+        # Embed only unembedded columns
+        for col in all_columns:
+            if col.description_embedding is None:
+                col.description_embedding = await embed_column(col, table.table_name)
+                count += 1
+                if on_progress:
+                    on_progress()
 
     # Glossary terms
     result = await db.execute(

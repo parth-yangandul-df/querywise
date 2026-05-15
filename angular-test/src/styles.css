@@ -1,1 +1,120 @@
 /* You can add global styles to this file, and also import other style files */
+
+/* ── Light mode defaults on :root ───────────────────────────────────────── */
+:root {
+  /* chat */
+  --bg:                  #ffffff;
+  --bg-topbar:           #ffffff;
+  --bg-input:            #f8fafc;
+  --bg-muted:            #f8fafc;
+  --bg-hover:            #f1f5f9;
+  --bg-even:             #fafbfc;
+  --border:              #e2e8f0;
+  --border-hover:        #cbd5e1;
+  --text-primary:        #1e293b;
+  --text-secondary:      #475569;
+  --text-muted:          #94a3b8;
+  --text-dimmed:         #64748b;
+  --th-bg:               #f1f5f9;
+  /* dashboard */
+  --bg-page:             #f8fafc;
+  --border-color:        #e2e8f0;
+  --btn-logout-bg:       #fff;
+  --btn-logout-border:   #e2e8f0;
+  --btn-logout-text:     #64748b;
+  --btn-chat-bg:         #1e293b;
+  --btn-chat-text:       #fff;
+  --select-bg:           #fff;
+  --select-border:       #e2e8f0;
+  --select-text:         #1e293b;
+  --badge-admin-bg:      #e0e7ff;
+  --badge-admin-text:    #4338ca;
+  --badge-manager-bg:    #fef9c3;
+  --badge-manager-text:  #92400e;
+  --badge-user-bg:       #dcfce7;
+  --badge-user-text:     #166534;
+  --btn-logout-hover-border: #cbd5e1;
+  --btn-logout-hover-text: #1e293b;
+  --btn-chat-hover-bg:   #334155;
+  --btn-chat-hover-border: #334155;
+  --state-msg-bg:        #f1f5f9;
+  --state-msg-text:      #64748b;
+  --state-msg-warn-bg:   #fefce8;
+  --state-msg-warn-text: #92400e;
+  --state-msg-warn-border: #fde68a;
+  --conn-name-text:      #64748b;
+  --conn-name-strong:    #1e293b;
+  /* login */
+  --bg-gradient-start:   #f0f4ff;
+  --bg-gradient-end:     #faf5ff;
+  --card-bg:             #fff;
+  --card-shadow:         rgba(0,0,0,.10);
+  --input-border:        #e2e8f0;
+  --input-focus:         #6366f1;
+  --table-border:        #f1f5f9;
+}
+
+/* ── Dark mode overrides — set immediately via html.dark from index.html ─── */
+html.dark {
+  /* chat */
+  --bg:                  #0f172a;
+  --bg-topbar:           #1e293b;
+  --bg-input:            #334155;
+  --bg-muted:            #1e293b;
+  --bg-hover:            #334155;
+  --bg-even:             #1e293b;
+  --border:              #334155;
+  --border-hover:        #475569;
+  --text-primary:        #f1f5f9;
+  --text-secondary:      #94a3b8;
+  --text-muted:          #64748b;
+  --text-dimmed:         #64748b;
+  --th-bg:               #1e293b;
+  /* dashboard */
+  --bg-page:             #0f172a;
+  --bg-topbar:           #1e293b;
+  --border-color:        #334155;
+  --btn-logout-bg:       #334155;
+  --btn-logout-border:   #475569;
+  --btn-logout-text:     #cbd5e1;
+  --btn-chat-bg:         #6366f1;
+  --btn-chat-text:       #fff;
+  --select-bg:           #1e293b;
+  --select-border:       #475569;
+  --select-text:         #f1f5f9;
+  --badge-admin-bg:      #312e81;
+  --badge-admin-text:    #c7d2fe;
+  --badge-manager-bg:    #451a03;
+  --badge-manager-text:  #fef9c3;
+  --badge-user-bg:       #14532d;
+  --badge-user-text:     #dcfce7;
+  --btn-logout-hover-border: #64748b;
+  --btn-logout-hover-text: #f1f5f9;
+  --btn-chat-hover-bg:   #818cf8;
+  --btn-chat-hover-border: #818cf8;
+  --state-msg-bg:        #1e293b;
+  --state-msg-text:      #94a3b8;
+  --state-msg-warn-bg:   #451a03;
+  --state-msg-warn-text: #fef9c3;
+  --state-msg-warn-border: #78350f;
+  --conn-name-text:      #94a3b8;
+  --conn-name-strong:    #f1f5f9;
+  /* login */
+  --bg-gradient-start:   #0f172a;
+  --bg-gradient-end:     #1e1b4b;
+  --card-bg:             #1e293b;
+  --card-shadow:         rgba(0,0,0,.30);
+  --input-border:        #334155;
+  --input-focus:         #6366f1;
+  --table-border:        #334155;
+}
+
+/* ── Prevent flash — cover all backgrounds before Angular renders ─────────── */
+html.dark,
+html.dark body,
+html.dark app-root,
+html.dark .chat-page,
+html.dark .page {
+  background: #0f172a !important;
+  color: #f1f5f9;
+}

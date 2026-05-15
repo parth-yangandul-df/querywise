@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import httpx
 from loguru import logger
 from tenacity import (
     before_sleep_log,
@@ -27,6 +28,9 @@ RETRYABLE_EXCEPTIONS = (
     TimeoutError,
     OSError,
     AppRateLimitError,
+    httpx.ConnectError,
+    httpx.TimeoutException,
+    httpx.ProtocolError,
 )
 
 

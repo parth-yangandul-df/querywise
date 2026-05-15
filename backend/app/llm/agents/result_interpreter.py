@@ -12,7 +12,6 @@ from app.llm.utils import repair_json
 @dataclass
 class InterpretationOutput:
     summary: str
-    highlights: list[str]
     suggested_followups: list[str]
 
 
@@ -47,7 +46,7 @@ class ResultInterpreterAgent:
     ) -> InterpretationOutput:
         """Convert raw query results into a human-readable answer."""
         # Build a preview of the results (limit to avoid huge prompts)
-        results_preview = _format_results_preview(columns, rows, max_rows=20)
+        results_preview = _format_results_preview(columns, rows, max_rows=5)
 
         user_prompt = USER_PROMPT_TEMPLATE.format(
             question=question,
@@ -64,19 +63,28 @@ class ResultInterpreterAgent:
 
         response = await self.provider.complete(messages, self.config)
 
+        # Track token usage and cost in MLflow
+        from app.core.mlflow_tracing import set_mlflow_llm_cost
+
+        set_mlflow_llm_cost(
+            model=response.model,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            cost_usd=response.cost_usd,
+            provider=self.provider.provider_type.value,
+        )
+
         try:
             parsed = json.loads(repair_json(response.content))
         except json.JSONDecodeError:
             # Fallback: use the raw response as the summary
             parsed = {
                 "summary": response.content,
-                "highlights": [],
                 "suggested_followups": [],
             }
 
         return InterpretationOutput(
             summary=parsed.get("summary", response.content),
-            highlights=parsed.get("highlights", []),
             suggested_followups=parsed.get("suggested_followups", []),
         )
 

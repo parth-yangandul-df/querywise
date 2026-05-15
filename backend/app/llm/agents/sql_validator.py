@@ -1,9 +1,15 @@
 """Agent: SQL Validator — validates generated SQL for safety and correctness."""
 
+import logging
 from dataclasses import dataclass
 from enum import StrEnum
 
+import sqlglot
+from sqlglot import exp
+
 from app.utils.sql_sanitizer import check_sql_safety
+
+logger = logging.getLogger(__name__)
 
 
 class ValidationStatus(StrEnum):
@@ -65,10 +71,10 @@ class SQLValidatorAgent:
 
         # Level 2: Schema validation (if schema context provided)
         if schema_tables:
-            schema_issues = _check_schema_references(sql, schema_tables)
+            schema_status, schema_issues = _check_schema_references(sql, schema_tables)
             if schema_issues:
                 return ValidationResult(
-                    status=ValidationStatus.SCHEMA_MISMATCH,
+                    status=schema_status,
                     issues=schema_issues,
                 )
 
@@ -81,67 +87,41 @@ class SQLValidatorAgent:
 def _check_schema_references(
     sql: str,
     schema_tables: dict[str, list[str]],
-) -> list[str]:
+) -> tuple[ValidationStatus, list[str]]:
     """Check if tables/columns referenced in SQL exist in the schema.
 
-    This is a best-effort check using simple parsing. For complex queries,
-    we rely on the database itself to report errors.
+    Uses sqlglot to parse SQL into an AST and extract table/column references.
+    Handles all SQL dialects including T-SQL (SQL Server).
+
+    Returns (status, issues). Status is SYNTAX_ERROR on parse failure,
+    SCHEMA_MISMATCH on unknown tables/columns, VALID when clean.
     """
     issues: list[str] = []
 
-    # Try to parse with sqlparse if available
     try:
-        import sqlparse
+        # Parse with T-SQL dialect for SQL Server compatibility
+        parsed = sqlglot.parse_one(sql, read="tsql")
+    except sqlglot.errors.ParseError as e:
+        logger.debug("SQL syntax error detected by parser: %s", e)
+        return ValidationStatus.SYNTAX_ERROR, [f"SQL syntax error: {e}"]
 
-        parsed = sqlparse.parse(sql)
-        if not parsed:
-            return issues
+    # Build lookup sets (case-insensitive)
+    all_table_names = {name.upper() for name in schema_tables}
+    all_known_cols: set[str] = set()
+    for cols in schema_tables.values():
+        all_known_cols.update(c.upper() for c in cols)
 
-        # Extract identifiers
-        # This is a simplified check — real production would use sqlglot
-        sql_upper = sql.upper()
-        all_table_names = {name.upper() for name in schema_tables}
+    # ── Check table references ──
+    for table in parsed.find_all(exp.Table):
+        table_name = table.name.upper()
+        # Skip CTE aliases and subquery aliases
+        if table_name not in all_table_names:
+            issues.append(f"Table '{table.name}' not found in schema")
 
-        # Check FROM and JOIN clauses for table references
-        from_pattern = _extract_from_tables(sql_upper)
-        for table_ref in from_pattern:
-            # Strip schema prefix and alias
-            clean_name = table_ref.split(".")[-1].split(" ")[0].strip('"').strip("'")
-            if clean_name and clean_name not in all_table_names and clean_name != "_Q":
-                issues.append(f"Table '{clean_name}' not found in schema")
+    # ── Check column references ──
+    for column in parsed.find_all(exp.Column):
+        col_name = column.name.upper()
+        if col_name not in all_known_cols:
+            issues.append(f"Column '{column.name}' not found in schema")
 
-    except ImportError:
-        # sqlparse not available, skip schema check
-        pass
-
-    return issues
-
-
-def _extract_from_tables(sql_upper: str) -> list[str]:
-    """Extract table names from FROM and JOIN clauses (simplified)."""
-    import re
-
-    tables = []
-
-    # SQL keywords that should NOT be treated as table names
-    sql_keywords = {
-        "BETWEEN", "EXISTS", "CASE", "WHEN", "THEN", "ELSE", "END",
-        "UNION", "INTERSECT", "EXCEPT", "ALL", "DISTINCT", "TOP",
-        "ORDER", "GROUP", "HAVING", "WHERE", "AND", "OR", "NOT", "IN",
-        "LIKE", "IS", "NULL", "AS", "ON", "WITH", "SELECT", "FROM",
-    }
-
-    # Match FROM table_name and JOIN table_name patterns
-    patterns = [
-        r"\bFROM\s+([A-Za-z_][A-Za-z0-9_.]*)",
-        r"\bJOIN\s+([A-Za-z_][A-Za-z0-9_.]*)",
-    ]
-    for pattern in patterns:
-        matches = re.findall(pattern, sql_upper, re.IGNORECASE)
-        for m in matches:
-            # Skip SQL keywords that incorrectly get matched
-            clean_name = m.split(".")[-1].split(" ")[0].strip('"').strip("'").upper()
-            if clean_name and clean_name not in sql_keywords:
-                tables.append(m)
-
-    return tables
+    return ValidationStatus.SCHEMA_MISMATCH if issues else ValidationStatus.VALID, issues

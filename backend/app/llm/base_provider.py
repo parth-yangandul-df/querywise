@@ -26,6 +26,7 @@ class LLMResponse:
     output_tokens: int
     finish_reason: str
     latency_ms: float
+    cost_usd: float | None = None
 
 
 @dataclass

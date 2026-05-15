@@ -1,13 +1,16 @@
-<div class="chat-page">
+<div class="chat-page" [class.dark]="isDark()">
   <!-- Top Bar -->
   <header class="chat-topbar">
     <div class="topbar-left">
-      <div class="brand">
+      <div class="brand" (click)="goHome()" title="Go to dashboard">
         <div class="logo">QW</div>
         <span class="brand-name">QueryWise</span>
       </div>
     </div>
     <div class="topbar-right">
+      <button class="btn-theme" (click)="toggleTheme()" title="Toggle theme">
+        {{ isDark() ? '☀️' : '🌙' }}
+      </button>
       <button class="btn-reset" (click)="resetChat()" title="Reset chat">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
@@ -25,10 +28,8 @@
       <div class="welcome-screen">
         <div class="welcome-content">
           <div class="welcome-icon">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-              <line x1="12" x2="12" y1="19" y2="22"/>
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2l2 6.5L20.5 10 14 13l2 6.5L12 16l-4 3.5L10 13 3.5 10 10 8.5 12 2z"/>
             </svg>
           </div>
           <h1 class="welcome-title">How can I help you?</h1>
@@ -59,18 +60,17 @@
                 {{ msg.content }}
               </div>
               <div class="message-avatar user-avatar">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-                  <circle cx="12" cy="7" r="4"/>
+                  <circle cx="12" cy="7" r="4" fill="currentColor" fill-opacity="0.15"/>
                 </svg>
               </div>
             </div>
           } @else if (msg.role === 'assistant' && msg.result) {
             <div class="message assistant-message">
               <div class="message-avatar bot-avatar">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2l1.5 5.5L19 9l-5.5 1.5L12 16l-1.5-5.5L5 9l5.5-1.5L12 2z"/>
                 </svg>
               </div>
               <div class="message-content">
@@ -82,19 +82,12 @@
                 }
 
                 <!-- Highlights -->
-                @if (msg.result.highlights.length > 0) {
-                  <div class="highlights">
-                    @for (h of msg.result.highlights; track h) {
-                      <span class="highlight-tag">{{ h }}</span>
-                    }
-                  </div>
-                }
 
-                <!-- Clarification options (not follow-ups) -->
+                <!-- Clarification options -->
                 @if (msg.result.clarification_options.length > 0) {
                   <div class="suggestion-chips">
                     @for (opt of msg.result.clarification_options; track opt) {
-                      <button class="chip">{{ opt }}</button>
+                      <button class="chip" (click)="selectOption(opt)">{{ opt }}</button>
                     }
                   </div>
                 }
@@ -102,41 +95,116 @@
                 <!-- Metadata -->
                 <div class="result-meta">
                   <span>{{ msg.result.row_count }} rows</span>
-                  <span>·</span>
-                  <span>{{ msg.result.execution_time_ms }}ms</span>
                   @if (msg.result.retry_count > 0) {
                     <span>·</span>
                     <span class="retry-badge">{{ msg.result.retry_count }} retries</span>
                   }
                 </div>
 
-                <!-- Result Table -->
-                @if (msg.result.rows.length > 0) {
+                <!-- Result Table with PrimeNG -->
+                @if (msg.result.rows.length > 0 && !(msg.result.rows.length === 1 && msg.result.columns.length === 1)) {
                   <div class="result-table-wrapper">
-                    <table class="result-table">
-                      <thead>
-                        <tr>
-                          @for (col of msg.result.columns; track col) {
-                            <th>{{ col }}</th>
-                          }
-                        </tr>
-                      </thead>
-                      <tbody>
-                        @for (row of msg.result.rows; track $index) {
+                    <div class="table-toolbar">
+                      <input
+                        type="text"
+                        class="table-search"
+                        placeholder="Search"
+                        [value]="getTableState(msg.result.id).searchTerm"
+                        (input)="onSearchChange(msg.result.id, $any($event.target).value)"
+                      />
+                      <button class="export-btn" (click)="exportToCsv(msg.result)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                          <polyline points="7 10 12 15 17 10"/>
+                          <line x1="12" y2="15" x1="12" y2="3"/>
+                        </svg>
+                        Export CSV
+                      </button>
+                    </div>
+
+                    <div class="table-scroll">
+                      <table class="result-table">
+                        <thead>
                           <tr>
-                            @for (cell of row; track $index) {
-                              <td>
-                                @if (cell === null || cell === undefined) {
-                                  <span class="null-value">null</span>
-                                } @else {
-                                  {{ cell }}
-                                }
-                              </td>
+                            @for (col of msg.result.columns; track col; let i = $index) {
+                              <th (click)="onSort(msg.result.id, col)" class="sortable-header">
+                                <span class="header-content">
+                                  {{ col }}
+                                  <i [class]="getSortIcon(msg.result.id, col)"></i>
+                                </span>
+                              </th>
                             }
                           </tr>
-                        }
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          @for (row of getPaginatedRows(msg.result).rows; track $index) {
+                            <tr>
+                              @for (cell of row; track $index; let cellIndex = $index) {
+                                <td [title]="formatCellValue(cell, msg.result.column_types[cellIndex])">
+                                  @if (cell === null || cell === undefined) {
+                                    <span class="null-value">null</span>
+                                  } @else {
+                                    {{ formatCellValue(cell, msg.result.column_types[cellIndex]) }}
+                                  }
+                                </td>
+                              }
+                            </tr>
+                          }
+                        </tbody>
+                      </table>
+                    </div>
+
+                    @if (getPaginatedRows(msg.result).total > 0) {
+                      <div class="table-pagination">
+<span class="pagination-info">
+                          {{ (getTableState(msg.result.id).currentPage - 1) * getTableState(msg.result.id).rowsPerPage + 1 }} -
+                          {{ min(getTableState(msg.result.id).currentPage * getTableState(msg.result.id).rowsPerPage, getPaginatedRows(msg.result).total) }}
+                          of {{ getPaginatedRows(msg.result).total }}
+                        </span>
+                        <div class="pagination-controls">
+                          <button
+                            class="page-btn"
+                            [disabled]="getTableState(msg.result.id).currentPage === 1"
+                            (click)="onPageChange(msg.result.id, getTableState(msg.result.id).currentPage - 1)"
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <polyline points="15 18 9 12 15 6"/>
+                            </svg>
+                          </button>
+
+                          @for (page of getVisiblePages(msg.result); track page) {
+                            <button
+                              class="page-btn"
+                              [class.active]="getTableState(msg.result.id).currentPage === page"
+                              (click)="onPageChange(msg.result.id, page)"
+                            >
+                              {{ page }}
+                            </button>
+                          }
+
+                          <button
+                            class="page-btn"
+                            [disabled]="getTableState(msg.result.id).currentPage >= getTotalPages(msg.result)"
+                            (click)="onPageChange(msg.result.id, getTableState(msg.result.id).currentPage + 1)"
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <polyline points="9 18 15 12 9 6"/>
+                            </svg>
+                          </button>
+                        </div>
+                        <div class="rows-dropdown">
+                          <select
+                            [value]="getTableState(msg.result.id).rowsPerPage"
+                            (change)="onRowsPerPageChange(msg.result.id, +$any($event.target).value)"
+                          >
+                            <option [value]="10">10</option>
+                            <option [value]="25">25</option>
+                            <option [value]="50">50</option>
+                          </select>
+                        </div>
+                      </div>
+                    }
+
                     @if (msg.result.truncated) {
                       <p class="truncated-notice">Results truncated — export CSV for full data</p>
                     }
@@ -194,6 +262,19 @@
               <div class="message-content">
                 <p class="error-title">Error</p>
                 <p class="error-text">{{ msg.errorMessage }}</p>
+                @if (msg.errorRetryable && _lastUserMessage) {
+                  @if (msg.errorRetryAfterSeconds != null && getErrorCountdown(msg) > 0) {
+                    <button class="retry-btn" (click)="retryMessage(msg)">
+                      Retry in {{ getErrorCountdown(msg) }}s
+                    </button>
+                  } @else {
+                    <button class="retry-btn retry-btn-now" (click)="retryMessage(msg)">
+                      Retry
+                    </button>
+                  }
+                } @else if (!msg.errorRetryable) {
+                  <p class="support-text">Contact support if this persists.</p>
+                }
               </div>
             </div>
           }
@@ -203,9 +284,8 @@
         @if (isLoading() && pipelineStage()) {
           <div class="message typing-message">
             <div class="message-avatar bot-avatar">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2l1.5 5.5L19 9l-5.5 1.5L12 16l-1.5-5.5L5 9l5.5-1.5L12 2z"/>
               </svg>
             </div>
             <div class="message-content typing-content">
@@ -214,7 +294,7 @@
                 <div class="progress-bar">
                   <div class="progress-fill" [style.width.%]="pipelineStage()!.progress"></div>
                 </div>
-                <span class="stage-label">{{ getStageLabel(pipelineStage()!.stage) }}</span>
+                <span class="stage-label">{{ pipelineStage()!.label }}</span>
               </div>
             </div>
           </div>
@@ -234,17 +314,29 @@
         rows="1"
         [disabled]="isLoading()"
       ></textarea>
-      <button
-        class="send-btn"
-        (click)="sendMessage()"
-        [disabled]="!input.trim() || isLoading()"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="22" x2="11" y1="2" y2="13"/>
-          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-        </svg>
-      </button>
+      @if (isLoading()) {
+        <button
+          class="stop-btn"
+          (click)="cancelQuery()"
+          title="Stop generating"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="6" width="12" height="12" rx="2"/>
+          </svg>
+        </button>
+      } @else {
+        <button
+          class="send-btn"
+          (click)="sendMessage()"
+          [disabled]="!input.trim()"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="22" x2="11" y1="2" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      }
     </div>
-    <p class="input-hint">Press Enter to send · Shift+Enter for new line</p>
+    <p class="input-hint">QueryWise can make mistakes. Consider checking important information.</p>
   </div>
 </div>

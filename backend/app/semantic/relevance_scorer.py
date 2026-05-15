@@ -204,8 +204,11 @@ def column_keyword_score(column_names: list[str], keywords: list[str]) -> float:
     keyword 'status' matches the column StatusId/StatusName even if the table
     name itself does not match.  Returns the maximum per-column score found.
 
-    Returns 0.8 for a strong column match (e.g. keyword is in a column name),
-    0.4 for a partial match, 0.0 for no match.
+    Returns 0.5 for a strong column match (e.g. keyword is in a column name),
+    0.25 for a partial match, 0.0 for no match.
+
+    Scores are intentionally lower than keyword_match_score (which returns 1.0 for
+    direct table-name matches) so column-only matches don't outrank the actual table.
     """
     if not keywords or not column_names:
         return 0.0
@@ -221,13 +224,13 @@ def column_keyword_score(column_names: list[str], keywords: list[str]) -> float:
         for kw in keywords:
             # Exact column name match
             if col_lower == kw:
-                return 0.8
+                return 0.5
             # Keyword is a component of the column name (e.g. 'status' in 'StatusId')
             if kw in col_parts:
-                best = max(best, 0.8)
+                best = max(best, 0.5)
             # Keyword is a substring of the full column name
             elif kw in col_lower:
-                best = max(best, 0.4)
+                best = max(best, 0.25)
 
     return best
 

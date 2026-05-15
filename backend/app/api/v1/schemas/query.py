@@ -13,6 +13,10 @@ class QueryRequest(BaseModel):
         default=False,
         description="Explicitly clear prior context — resets session history for this query",
     )
+    skip_cache: bool = Field(
+        default=False,
+        description="Bypass the SQL cache and force fresh LLM generation + execution",
+    )
 
 
 class ExecuteSQLRequest(BaseModel):

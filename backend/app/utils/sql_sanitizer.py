@@ -115,6 +115,37 @@ _BLOCKED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.compile(r";\s*\b(SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE)\b", re.IGNORECASE),
         "Multiple statements (stacked queries) are not allowed",
     ),
+    # Tautology injection detection (always-true conditions)
+    # Matches patterns like: '1'='1', 'a'='a', 1=1, true=true, etc.
+    (
+        re.compile(r"'[^']*'\s*=\s*'[^']*'", re.IGNORECASE),
+        " tautology detected (string equality)",
+    ),
+    (
+        re.compile(r"\b\d+\s*=\s*\d+\b"),
+        " tautology detected (numeric equality)",
+    ),
+    (
+        re.compile(r"\b(true|false)\s*=\s*(true|false)\b", re.IGNORECASE),
+        " tautology detected (boolean equality)",
+    ),
+    (
+        re.compile(r"\b1\s*=\s*1\b"),
+        " tautology detected (always true)",
+    ),
+    (
+        re.compile(r"\b0\s*=\s*0\b"),
+        " tautology detected (always true)",
+    ),
+    # Comment injection attempts
+    (
+        re.compile(r"--\s*$", re.IGNORECASE),
+        " comment injection detected",
+    ),
+    (
+        re.compile(r"/\*\s*\*/", re.IGNORECASE),
+        " empty comment detected",
+    ),
 ]
 
 

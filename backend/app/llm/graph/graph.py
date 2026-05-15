@@ -40,17 +40,10 @@ Graph topology:
        │                         └─────────────────────────→ execute_sql
        │                                                     Runs final SQL against the target
        │                                                     database via the registered connector.
+       │                                                     Formats the answer as a markdown
+       │                                                     table directly (no LLM interpret step).
        │                                                          │
-       │                                                   interpret_result
-       │                                                     ResultInterpreterAgent: LLM call to
-       │                                                     produce a human-readable answer,
-       │                                                     highlights, and follow-up suggestions.
-       │                                                          │
-       ├─ action=show_sql ───────→ answer_from_state              │
-       │  User asks "show me the SQL". Returns last_generated_sql │
-       │  from loaded state — no DB execution needed.             │
-       │                             │                            │
-       ├─ action=explain_result ─────┤                            │
+       ├─ action=explain_result ───→ answer_from_state            │
        │  User asks "why is X here?". LLM call grounded in the    │
        │  stored result preview — no DB execution needed.         │
        │                             │                            │
@@ -67,16 +60,17 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
-from app.config import settings
 from app.llm.graph.nodes.answer_from_state import answer_from_state
 from app.llm.graph.nodes.build_context_node import build_context_node
 from app.llm.graph.nodes.compose_sql import compose_sql, route_after_compose
 from app.llm.graph.nodes.execute_sql import execute_sql, route_after_execute
 from app.llm.graph.nodes.handle_error import handle_error, route_after_handle_error
+from app.llm.graph.nodes.handle_follow_up import handle_follow_up, route_after_follow_up
 from app.llm.graph.nodes.history_writer import write_history
 from app.llm.graph.nodes.load_history import load_history
+from app.llm.graph.nodes.rebuild_context import rebuild_context, route_after_rebuild
 from app.llm.graph.nodes.resolve_turn import resolve_turn, route_after_resolve
-from app.llm.graph.nodes.result_interpreter import interpret_result
+from app.llm.graph.nodes.show_schema import show_schema
 from app.llm.graph.nodes.similarity_check import route_after_similarity, similarity_check
 from app.llm.graph.nodes.validate_sql import route_after_validate, validate_sql
 from app.llm.graph.state import GraphState
@@ -84,26 +78,6 @@ from app.llm.graph.state import GraphState
 logger = logging.getLogger(__name__)
 
 _compiled_graph: Any = None
-_langsmith_checkpointer: Any = None
-
-
-def _setup_langsmith_tracing() -> None:
-    """Initialize LangSmith tracing on startup."""
-    global _langsmith_checkpointer
-
-    if not settings.langsmith_tracing_enabled or not settings.langsmith_api_key:
-        return
-
-    try:
-        from langgraph.checkpoint.postgres import PostgresSaver  # type: ignore[import-not-found]
-
-        _langsmith_checkpointer = PostgresSaver.from_conn_string(
-            settings.database_url.replace("+asyncpg", ""),
-        )
-        _langsmith_checkpointer.setup()
-        logger.info("LangSmith tracing enabled for project: %s", settings.langsmith_project)
-    except Exception:
-        logger.warning("Failed to setup LangSmith tracing: %s", exc_info=True)
 
 
 def _build_graph(checkpointer: Any | None = None) -> Any:
@@ -115,14 +89,16 @@ def _build_graph(checkpointer: Any | None = None) -> Any:
     # ── Nodes ────────────────────────────────────────────────────────────
     graph.add_node("load_history", load_history)
     graph.add_node("resolve_turn", resolve_turn)
+    graph.add_node("handle_follow_up", handle_follow_up)
     graph.add_node("build_context", build_context_node)
     graph.add_node("similarity_check", similarity_check)
     graph.add_node("compose_sql", compose_sql)
     graph.add_node("validate_sql", validate_sql)
+    graph.add_node("rebuild_context", rebuild_context)  # FIX #2: Add rebuild node
     graph.add_node("handle_error", handle_error)
     graph.add_node("execute_sql", execute_sql)
     graph.add_node("answer_from_state", answer_from_state)
-    graph.add_node("interpret_result", interpret_result)
+    graph.add_node("show_schema", show_schema)
     graph.add_node("write_history", write_history)
 
     # ── Entry ─────────────────────────────────────────────────────────────
@@ -134,9 +110,21 @@ def _build_graph(checkpointer: Any | None = None) -> Any:
         "resolve_turn",
         route_after_resolve,
         {
-            "build_context": "build_context",  # query path
+            "build_context": "build_context",  # query path + follow_up needs_full_compose
+            "handle_follow_up": "handle_follow_up",  # follow_up reuse/rewrite path
             "answer_from_state": "answer_from_state",
             "write_history": "write_history",  # clarification path
+        },
+    )
+
+    # ── Follow-up path ───────────────────────────────────────────────────
+    graph.add_conditional_edges(
+        "handle_follow_up",
+        route_after_follow_up,
+        {
+            "execute_sql": "execute_sql",  # follow_up_rewrite_sql path — skip validation
+            "build_context": "build_context",  # validation failed — escalate to full compose
+            "write_history": "write_history",  # reuse_answer or clarification
         },
     )
 
@@ -156,8 +144,9 @@ def _build_graph(checkpointer: Any | None = None) -> Any:
         "compose_sql",
         route_after_compose,
         {
-            "validate_sql": "validate_sql",
-            "write_history": "write_history",  # scope violation / no SQL produced
+            "validate_sql": "validate_sql",   # proceed to validation
+            "compose_sql": "compose_sql",   # retry: LLM returned empty SQL
+            "write_history": "write_history",  # scope violation / no SQL after retries
         },
     )
 
@@ -166,6 +155,17 @@ def _build_graph(checkpointer: Any | None = None) -> Any:
         route_after_validate,
         {
             "execute_sql": "execute_sql",
+            "rebuild_context": "rebuild_context",  # FIX #2: Route to rebuild on schema mismatch
+            "handle_error": "handle_error",
+        },
+    )
+
+    # FIX #2: Rebuild context then re-validate
+    graph.add_conditional_edges(
+        "rebuild_context",
+        route_after_rebuild,
+        {
+            "validate_sql": "validate_sql",  # Re-validate with new context
             "handle_error": "handle_error",
         },
     )
@@ -181,19 +181,19 @@ def _build_graph(checkpointer: Any | None = None) -> Any:
         },
     )
 
-    # Execute SQL: route to handle_error on failure, else interpret result
+    # Execute SQL: route to handle_error on failure, else write_history directly
     graph.add_conditional_edges(
         "execute_sql",
         route_after_execute,
         {
             "handle_error": "handle_error",  # execution failed — retry
-            "interpret_result": "interpret_result",  # success
+            "write_history": "write_history",  # success — answer already formatted
         },
     )
-    graph.add_edge("interpret_result", "write_history")
 
     # ── Non-query paths ───────────────────────────────────────────────────
     graph.add_edge("answer_from_state", "write_history")
+    graph.add_edge("show_schema", "write_history")
     graph.add_edge("write_history", END)
 
     return graph.compile(checkpointer=checkpointer)
@@ -203,5 +203,5 @@ def get_compiled_graph():
     """Return the compiled graph singleton. Thread-safe after first call."""
     global _compiled_graph
     if _compiled_graph is None:
-        _compiled_graph = _build_graph(checkpointer=_langsmith_checkpointer)
+        _compiled_graph = _build_graph()
     return _compiled_graph

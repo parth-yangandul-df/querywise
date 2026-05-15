@@ -12,7 +12,6 @@ from app.llm.base_provider import (
     LLMResponse,
 )
 from app.llm.retry import llm_retry
-from app.llm.tracing import trace_llm_call
 
 logger = __import__("logging").getLogger(__name__)
 
@@ -33,27 +32,14 @@ class OpenAIProvider(BaseLLMProvider):
 
         start = time.monotonic()
         try:
-            with trace_llm_call(
-                provider="openai",
+            response = await self._client.chat.completions.create(
                 model=config.model,
-                operation="complete",
-                metadata={
-                    "temperature": config.temperature,
-                    "max_tokens": config.max_tokens,
-                    "messages_count": len(messages),
-                },
-            ):
-                response = await self._client.chat.completions.create(
-                    model=config.model,
-                    messages=oai_messages,
-                    temperature=config.temperature,
-                    max_completion_tokens=config.max_tokens,
-                    top_p=config.top_p,
-                    stop=config.stop_sequences or None,
-                    extra_body={
-                        "cache_control": {"type": "ephemeral", "ttl": "1h"}
-                    },
-                )
+                messages=oai_messages,
+                temperature=config.temperature,
+                max_completion_tokens=config.max_tokens,
+                top_p=config.top_p,
+                stop=config.stop_sequences or None,
+            )
         except Exception as err:
             raise_if_provider_rate_limited(err, "OpenAI")
             logger.error("OpenAI API error: %s", err, exc_info=True)
@@ -96,25 +82,13 @@ class OpenAIProvider(BaseLLMProvider):
         oai_messages = [{"role": m.role, "content": m.content} for m in messages]
 
         try:
-            with trace_llm_call(
-                provider="openai",
+            stream = await self._client.chat.completions.create(
                 model=config.model,
-                operation="stream",
-                metadata={
-                    "temperature": config.temperature,
-                    "max_tokens": config.max_tokens,
-                },
-            ):
-                stream = await self._client.chat.completions.create(
-                    model=config.model,
-                    messages=oai_messages,
-                    temperature=config.temperature,
-                    max_completion_tokens=config.max_tokens,
-                    stream=True,
-                    extra_body={
-                        "cache_control": {"type": "ephemeral", "ttl": "1h"}
-                    },
-                )
+                messages=oai_messages,
+                temperature=config.temperature,
+                max_completion_tokens=config.max_tokens,
+                stream=True,
+            )
         except Exception as err:
             raise_if_provider_rate_limited(err, "OpenAI")
             logger.error("OpenAI stream error: %s", exc_info=True)
@@ -129,19 +103,13 @@ class OpenAIProvider(BaseLLMProvider):
         from app.config import settings
 
         try:
-            with trace_llm_call(
-                provider="openai",
+            response = await self._client.embeddings.create(
                 model=settings.embedding_model,
-                operation="embed",
-                metadata={"text_length": len(text)},
-            ):
-                response = await self._client.embeddings.create(
-                    model=settings.embedding_model,
-                    input=text,
-                )
+                input=text,
+            )
         except Exception as err:
             raise_if_provider_rate_limited(err, "OpenAI")
-            logger.error("OpenAI embedding error: %s", exc_info=True)
+            logger.error("OpenAI embedding error: %s", err, exc_info=True)
             raise
         return response.data[0].embedding
 

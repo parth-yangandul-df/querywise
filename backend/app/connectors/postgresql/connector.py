@@ -1,3 +1,5 @@
+import logging
+import re
 import time
 from typing import Any
 
@@ -14,6 +16,8 @@ from app.connectors.base_connector import (
 from app.core.exceptions import ConnectionError, QueryTimeoutError, SQLSafetyError
 from app.utils.sql_sanitizer import check_sql_safety
 
+logger = logging.getLogger(__name__)
+
 
 class PostgreSQLConnector(BaseConnector):
     connector_type = ConnectorType.POSTGRESQL
@@ -29,10 +33,25 @@ class PostgreSQLConnector(BaseConnector):
                 max_size=kwargs.get("pool_size", 5),
                 command_timeout=kwargs.get("command_timeout", 60),
             )
-        except Exception:
+        except asyncpg.CannotConnectNowError:
+            logger.warning("connect: database not accepting connections (CannotConnectNowError)")
+            raise ConnectionError(
+                "Database is temporarily unavailable. Please try again later."
+            ) from None
+        except asyncpg.InvalidCatalogNameError:
+            logger.warning("connect: database does not exist (InvalidCatalogNameError)")
+            raise ConnectionError(
+                "Database not found. Please verify your connection settings."
+            ) from None
+        except Exception as exc:
+            sqlstate = getattr(exc, "sqlstate", "?")
+            pgcode = getattr(exc, "pgcode", "?")
+            logger.warning(
+                "connect: pool creation failed (sqlstate=%s, pgcode=%s)", sqlstate, pgcode
+            )
             raise ConnectionError(
                 "Unable to connect to the database. Please verify your connection settings."
-            )
+            ) from None
 
     async def disconnect(self) -> None:
         if self._pool:
@@ -46,7 +65,10 @@ class PostgreSQLConnector(BaseConnector):
             async with self._pool.acquire() as conn:
                 await conn.fetchval("SELECT 1")
             return True
-        except Exception:
+        except Exception as exc:
+            sqlstate = getattr(exc, "sqlstate", "?")
+            pgcode = getattr(exc, "pgcode", "?")
+            logger.debug("test_connection failed (sqlstate=%s, pgcode=%s)", sqlstate, pgcode)
             return False
 
     async def introspect_schemas(self) -> list[str]:
@@ -202,7 +224,7 @@ class PostgreSQLConnector(BaseConnector):
             raise SQLSafetyError()
 
         assert self._pool is not None  # safety: already checked above via SQLSafetyError path
-        wrapped_sql = sql.rstrip().rstrip(";")
+        wrapped_sql = _inject_limit(sql, max_rows + 1)
 
         start = time.monotonic()
         try:
@@ -212,7 +234,8 @@ class PostgreSQLConnector(BaseConnector):
                     await conn.execute(f"SET LOCAL statement_timeout = '{timeout_seconds * 1000}'")
                     rows = await conn.fetch(wrapped_sql)
         except asyncpg.QueryCanceledError:
-            raise QueryTimeoutError(timeout_seconds)
+            logger.warning("execute_query: query canceled (timeout=%ds)", timeout_seconds)
+            raise QueryTimeoutError(timeout_seconds) from None
 
         elapsed_ms = (time.monotonic() - start) * 1000
         truncated = len(rows) > max_rows
@@ -259,6 +282,30 @@ class PostgreSQLConnector(BaseConnector):
             async with conn.transaction(readonly=True):
                 rows = await conn.fetch(query)
         return [row[column] for row in rows]
+
+
+def _inject_limit(sql: str, n: int) -> str:
+    """Ensure a SELECT has a LIMIT capped at n rows.
+
+    Handles:
+        SELECT ...         → SELECT ... LIMIT n
+        SELECT ... LIMIT M → SELECT ... LIMIT min(M, n)  (enforces cap)
+    Strips trailing semicolons to avoid syntax errors when appending LIMIT.
+    """
+    stripped = sql.rstrip().rstrip(";").rstrip()
+    upper = stripped.upper()
+
+    limit_match = re.search(r"\bLIMIT\s+(\d+)\b", upper)
+    if limit_match:
+        existing_n = int(limit_match.group(1))
+        if existing_n <= n:
+            return stripped
+        # Replace the existing LIMIT value with n
+        start = limit_match.start(1)
+        end = limit_match.end(1)
+        return f"{stripped[:start]}{n}{stripped[end:]}"
+
+    return f"{stripped} LIMIT {n}"
 
 
 def _pg_type_name(value: Any) -> str:

@@ -121,6 +121,7 @@ angular-test/src/       # Angular 21 chat UI (port 4200)
 | `USE_GROQ_EXTRACTOR` | `false` | Enable Groq unified intent + filter extractor |
 | `USE_QUERY_PLAN_COMPILER` | `false` | QueryPlan compiler feature flag |
 | `USE_HYBRID_MODE` | `false` | Hybrid Mode (context-aware query system) |
+| `USE_FOLLOW_UP_PATH` | `false` | Enable compact follow-up query refinement path (reduces token usage on follow-up queries) |
 
 ### Cloud Ollama (Optional)
 
@@ -245,3 +246,23 @@ GROQ_API_KEY=your-groq-api-key
 - **Services:** Business logic in `app/services/`, never in endpoints directly
 - **Knowledge:** Import text/HTML content, auto-detect HTML, section-aware chunking (450 words, 80 overlap), vector + keyword search for relevant chunks injected into LLM prompt. URL fetching server-side via `httpx`. Service in `app/services/knowledge_service.py`
 - **SQL safety:** Read-only transactions enforced at connector level, static SQL blocklist in `app/utils/sql_sanitizer.py` (blocks DDL, DML, admin commands, injection patterns)
+
+## Follow-Up Query Path
+
+When `USE_FOLLOW_UP_PATH=true`, the system supports compact follow-up refinement queries that reduce token usage and improve response times:
+
+### Graph Flow
+1. **resolve_turn** classifies user message into 5 actions: `query`, `follow_up_query_refinement`, `show_sql`, `explain_result`, `clarification`
+2. For `follow_up_query_refinement`, the LLM decides between:
+   - `reuse_answer`: Returns cached prior answer without new SQL
+   - `rewrite_sql`: Rewrites prior SQL with modifications (projection, filter, sort, limit)
+   - `needs_full_compose`: Escalates to full build_context path
+3. **handle_follow_up** node processes the follow-up mode
+
+### Turn Context Persistence
+- `last_query_context` is stored in `turn_context` JSONB column in `query_executions` table
+- Includes: `resolved_question`, `sql`, `answer`, `result_columns`, `result_preview_rows` (5 rows), `result_status`
+
+### Result Status
+- Query responses now include `result_status`: `success`, `empty`, or `error`
+- Empty results (0 rows) are explicit: returns "No matching rows found." message

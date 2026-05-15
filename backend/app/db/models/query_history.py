@@ -13,7 +13,7 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from app.db.models.chat_session import ChatSession
 
-TurnType = Literal["query", "clarification", "show_sql", "explain_result"]
+TurnType = Literal["query", "clarification", "explain_result", "show_schema"]
 ClarificationReason = Literal[
     "low_confidence_rewrite",
     "retry_exhausted",
@@ -59,6 +59,4 @@ class QueryExecution(Base):
     result_preview_rows: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     # Relationship back to session
-    session: Mapped["ChatSession | None"] = relationship(
-        "ChatSession", back_populates="executions"
-    )
+    session: Mapped[ChatSession | None] = relationship("ChatSession", back_populates="executions")

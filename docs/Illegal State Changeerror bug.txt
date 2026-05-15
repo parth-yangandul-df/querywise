@@ -1,0 +1,65 @@
+So this is the logs:
+{"timestamp": "2026-05-10T10:30:20.039Z", "level": "info", "component": "app.main", "operation": null, "operation_status": null, "trace_id": null, "message": "QueryWise startup complete", "context": {}, "metrics": null, "error": null}
+INFO:     Application startup complete.
+{"timestamp": "2026-05-10T10:31:01.709Z", "level": "info", "component": "app.llm.graph.nodes.resolve_turn", "operation": null, "operation_status": null, "trace_id": null, "message": "resolve_turn: history_count=0 action=query resolved_question=list all the resources reporting to arun prabu", "context": {}, "metrics": null, "error": null}
+{"timestamp": "2026-05-10T10:31:12.992Z", "level": "warning", "component": "app.semantic.context_builder", "operation": null, "operation_status": null, "trace_id": null, "message": "Embedding generation timed out after 3s \u2014 using keyword-only context. Consider switching to a faster embedding provider (e.g. Ollama nomic-embed-text).", "context": {}, "metrics": null, "error": null}
+{"timestamp": "2026-05-10T10:31:12.994Z", "level": "info", "component": "app.semantic.schema_linker", "operation": null, "operation_status": null, "trace_id": null, "message": "schema_linker: question='list all the resources reporting to arun prabu' keywords=['resources', 'reporting', 'arun', 'prabu'] connection=3803127e-a803-4d72-b7cb-5853a7045505", "context": {}, "metrics": null, "error": null}
+{"timestamp": "2026-05-10T10:31:13.495Z", "level": "error", "component": "app.api.v1.endpoints.query", "operation": null, "operation_status": null, "trace_id": null, "message": "Query stream error", "context": {}, "metrics": null, "error": {"type": "IllegalStateChangeError", "message": "Method 'close()' can't be called here; method '_connection_for_bind()' is already in progress and this would cause an unexpected state change to <SessionTransactionState.CLOSED: 5> (Background on this error at: https://sqlalche.me/e/20/isce)"}}
+
+=====================================================================================================================
+
+This kept happening again and again since i implemented db parallelization.
+The IllegalStateChangeError is back. This is the SQLAlchemy session concurrency issue we thought we fixed by wrapping _fetch_tables_by_names calls in _with_new_session. But it's still happening.
+
+Let me look at the current state of context_builder.py to see what's happening. The error mentions Method 'close()' can't be called here; method '_connection_for_bind()' is already in progress — this suggests concurrent access to a shared session is still happening somewhere.
+
+The embedding timeout at 3s is suspicious too — "Embedding generation timed out after 3s" means the embedding call is taking >3 seconds, which means the event loop is blocked or the embedding service is slow.
+
+But the real issue is the IllegalStateChangeError. Let me re-read the context_builder to see if there are other places where the shared db session is being used concurrently.
+
+The fix:
+
+Both files compile clean. Here's the root cause:
+
+Why IllegalStateChangeError Kept Coming Back
+SQLAlchemy AsyncSession is NOT safe for concurrent operations. Even two "independent" SELECT queries can't run concurrently on the same session object. The previous fix only addressed _fetch_tables_by_names — it missed the deeper issue: asyncio.gather was being used with multiple coroutines sharing the same db session.
+
+Two places were broken:
+
+1. schema_linker.py:142
+python
+# BEFORE — all three use same `db` concurrently
+await asyncio.gather(
+    _keyword_search_tables(db, connection_id, keywords),
+    _column_keyword_search_tables(db, connection_id, keywords),
+    _get_tables_by_names(db, connection_id, anchor_table_names),
+)
+2. context_builder.py:215
+python
+# BEFORE — both use same `db` concurrently
+await asyncio.gather(
+    resolve_dictionary(db, column_ids),
+    _get_relationships_between(db, table_ids),
+)
+When two coroutines hit await db.execute(...) on the same session simultaneously, SQLAlchemy's internal state machine corrupts — _connection_for_bind() starts on one coroutine, then close() gets triggered on another, producing:
+
+IllegalStateChangeError: Method 'close()' can't be called here; 
+method '_connection_for_bind()' is already in progress
+The Fix
+Both changed to sequential execution:
+
+python
+# schema_linker.py — now sequential
+keyword_results = await _keyword_search_tables(db, connection_id, keywords)
+column_hit_results = await _column_keyword_search_tables(db, connection_id, keywords)
+anchor_results = await _get_tables_by_names(db, connection_id, anchor_table_names)
+python
+# context_builder.py — now sequential
+dictionaries = await resolve_dictionary(db, column_ids)
+relationships = await _get_relationships_between(db, table_ids)
+The asyncio.gather at lines 156-162 is safe because each call is wrapped in _with_new_session — each gets its own isolated session.
+
+Latency Impact
+Minimal. These are lightweight metadata queries (cached tables, dictionary entries). The parallel save was ~20-50ms at best. Eliminating the error is worth far more than that micro-optimization.
+
+Restart the backend and retry. The IllegalStateChangeError should be gone for good.

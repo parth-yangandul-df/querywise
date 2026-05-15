@@ -5,12 +5,13 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_optional_user, require_role
+from app.api.deps import require_role
 from app.api.v1.schemas.metric import MetricCreate, MetricResponse, MetricUpdate
 from app.core.exceptions import NotFoundError
 from app.db.models.metric import MetricDefinition
 from app.db.models.user import User
 from app.db.session import get_db
+from app.semantic.glossary_resolver import invalidate_metrics_cache
 from app.services.embedding_service import embed_metric
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ router = APIRouter(tags=["metrics"])
 async def list_metrics(
     connection_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(require_role("admin")),
 ):
     result = await db.execute(
         select(MetricDefinition)
@@ -58,6 +59,7 @@ async def create_metric(
         logger.warning("Failed to embed metric %s", metric.id, exc_info=True)
     await db.flush()
     await db.refresh(metric)
+    invalidate_metrics_cache(connection_id)
     return metric
 
 
@@ -69,7 +71,7 @@ async def get_metric(
     connection_id: uuid.UUID,
     metric_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(require_role("admin")),
 ):
     metric = await db.get(MetricDefinition, metric_id)
     if not metric or metric.connection_id != connection_id:
@@ -102,6 +104,7 @@ async def update_metric(
         logger.warning("Failed to embed metric %s", metric_id, exc_info=True)
     await db.flush()
     await db.refresh(metric)
+    invalidate_metrics_cache(connection_id)
     return metric
 
 
@@ -120,3 +123,4 @@ async def delete_metric(
         raise NotFoundError("Metric", str(metric_id))
     await db.delete(metric)
     await db.flush()
+    invalidate_metrics_cache(connection_id)
