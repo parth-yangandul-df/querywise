@@ -64,13 +64,6 @@ from dotenv import dotenv_values, find_dotenv
 # =============================================================================
 GLOSSARY_TERMS: list[dict] = [
     {
-        "term": "Resource",
-        "definition": "An individual employee or workforce member who performs tasks and logs work in the system.",
-        "sql_expression": "Resource.ResourceId",
-        "related_tables": ["Resource"],
-        "related_columns": ["Resource.ResourceId"]
-    },
-    {
         "term": "Active Resource",
         "definition": "A resource who is currently active and part of the organization.",
         "sql_expression": "CASE WHEN Resource.IsActive = 1 AND Resource.StatusId IN (SELECT StatusId FROM Status WHERE StatusName = 'Active')",
@@ -158,14 +151,6 @@ GLOSSARY_TERMS: list[dict] = [
         "related_columns": ["Resource.DateOfJoin"],
     },
     {
-        "term": "Client",
-        "definition": "An external organization or customer for whom services are delivered.",
-        "sql_expression": "Client.ClientId",
-        "related_tables": ["Client"],
-        "related_columns": ["Client.ClientId"],
-        "examples": ["SELECT * FROM Client WHERE IsActive = 1"],
-    },
-    {
         "term": "Active Client",
         "definition": "A client that is currently active and engaged in business operations.",
         "sql_expression": "CASE WHEN Client.IsActive = 1 THEN 1 ELSE 0 END",
@@ -194,20 +179,6 @@ GLOSSARY_TERMS: list[dict] = [
         "related_columns": ["Client.AgreementDuration"],
     },
     {
-        "term": "Client Start Date",
-        "definition": "The actual start date of engagement with the client.",
-        "sql_expression": "Client.ActualStartDate",
-        "related_tables": ["Client"],
-        "related_columns": ["Client.ActualStartDate"],
-    },
-    {
-        "term": "Client End Date",
-        "definition": "The actual end date of engagement with the client.",
-        "sql_expression": "Client.ActualEndDate",
-        "related_tables": ["Client"],
-        "related_columns": ["Client.ActualEndDate"],
-    },
-    {
         "term": "Business Unit",
         "definition": "An organizational division responsible for a specific business function or service line.",
         "sql_expression": "BusinessUnit.BusinessUnitId",
@@ -221,12 +192,7 @@ GLOSSARY_TERMS: list[dict] = [
         "related_tables": ["BusinessUnit"],
         "related_columns": ["BusinessUnit.IsActive"],
     },
-    {
-        "term": "City",
-        "definition": "Geographical city associated with clients or resources.",
-        "sql_expression": "cities.cityID",
-        "related_tables": ["cities"],
-    },
+
     {
         "term": "Client Stakeholder",
         "definition": "An individual associated with a client organization who is involved in communication, decision-making, or project oversight.",
@@ -247,20 +213,6 @@ GLOSSARY_TERMS: list[dict] = [
         "sql_expression": "ClientStakeholder.EmailId",
         "related_tables": ["ClientStakeholder"],
         "related_columns": ["ClientStakeholder.EmailId", "ClientStakeholder.ContactNumber"],
-    },
-    {
-        "term": "Company Type",
-        "definition": "Classification of a client organization based on its business nature or structure.",
-        "sql_expression": "CompanyType.CompanyTypeId",
-        "related_tables": ["CompanyType"],
-        "related_columns": ["CompanyType.CompanyTypeId"],
-    },
-    {
-        "term": "Active Company Type",
-        "definition": "A company type that is currently valid and in use.",
-        "sql_expression": "CASE WHEN CompanyType.IsActive = 1 THEN 1 ELSE 0 END",
-        "related_tables": ["CompanyType"],
-        "related_columns": ["CompanyType.IsActive"],
     },
     {
         "term": "Designated Role",
@@ -296,14 +248,6 @@ GLOSSARY_TERMS: list[dict] = [
         "sql_expression": "CASE WHEN Designation.IsActive = 1 THEN 1 ELSE 0 END",
         "related_tables": ["Designation"],
         "related_columns": ["Designation.IsActive"],
-    },
-    {
-        "term": "Project",
-        "definition": "A client engagement or initiative under which work is planned, executed, and tracked.",
-        "sql_expression": "Project.ProjectId",
-        "related_tables": ["Project"],
-        "related_columns": ["Project.ProjectId"],
-        "examples": ["SELECT * FROM Project WHERE IsActive = 1"],
     },
     {
         "term": "Active Project",
@@ -420,13 +364,6 @@ GLOSSARY_TERMS: list[dict] = [
         "related_columns": ["Status.StatusName", "Status.ReferenceId"],
     },
     {
-        "term": "Email Queue Status",
-        "definition": "Processing status of email queue items such as Pending, Success, or Error.",
-        "sql_expression": "Status.StatusName",
-        "related_tables": ["Status"],
-        "related_columns": ["Status.StatusName", "Status.ReferenceId"],
-    },
-    {
         "term": "Active Status",
         "definition": "A status value indicating an entity is currently active.",
         "sql_expression": "CASE WHEN Status.StatusName = 'Active' THEN 1 ELSE 0 END",
@@ -448,20 +385,6 @@ GLOSSARY_TERMS: list[dict] = [
         "related_columns": ["TechCatagory.TechCategoryName"],
     },
     {
-        "term": "Active Technology Category",
-        "definition": "A technology category that is currently active and available for use.",
-        "sql_expression": "CASE WHEN TechCatagory.IsActive = 1 THEN 1 ELSE 0 END",
-        "related_tables": ["TechCatagory"],
-        "related_columns": ["TechCatagory.IsActive"],
-    },
-    {
-        "term": "Technology Category Function Mapping",
-        "definition": "Mapping of a technology category to one or more functions using FunctionIds.",
-        "sql_expression": "TechCatagory.FunctionIds",
-        "related_tables": ["TechCatagory"],
-        "related_columns": ["TechCatagory.FunctionIds"],
-    },
-    {
         "term": "Technology Function",
         "definition": "A functional grouping of technology roles such as Development, QA, DevOps, or Data.",
         "sql_expression": "TechFunction.FunctionId",
@@ -474,20 +397,6 @@ GLOSSARY_TERMS: list[dict] = [
         "sql_expression": "TechFunction.FunctionName",
         "related_tables": ["TechFunction"],
         "related_columns": ["TechFunction.FunctionName"],
-    },
-    {
-        "term": "Active Technology Function",
-        "definition": "A technology function that is currently active and usable.",
-        "sql_expression": "CASE WHEN TechFunction.IsActive = 1 THEN 1 ELSE 0 END",
-        "related_tables": ["TechFunction"],
-        "related_columns": ["TechFunction.IsActive"],
-    },
-    {
-        "term": "Function Organization Mapping",
-        "definition": "Mapping of technology function to one or more organizations.",
-        "sql_expression": "TechFunction.OrganizationIds",
-        "related_tables": ["TechFunction"],
-        "related_columns": ["TechFunction.OrganizationIds"],
     },
     {
         "term": "Client Name",
@@ -509,13 +418,7 @@ GLOSSARY_TERMS: list[dict] = [
         "sql_expression": "Resource.ResourceName",
         "related_tables": ["Resource"],
         "related_columns": ["Resource.ResourceName"],
-    },
-    {
-        "term": "Employee",
-        "definition": "An employee refers to a resource in the system.",
-        "sql_expression": "Resource.ResourceId",
-        "related_tables": ["Resource"],
-    },
+    }
     # -------------------------------------------------------------------------
     # TODO: Replace these examples with terms from your domain.
     #
@@ -581,7 +484,7 @@ METRICS: list[dict] = [
         "metric_name": "new_joiners",
         "display_name": "New Joiners",
         "description": "Number of resources who joined in a given period",
-        "sql_expression": "COUNT(Resource.ResourceId)",
+        "sql_expression": "COUNT(Resource.ResourceId) WHERE Resource.DateOfJoin >= DATEADD(MONTH, -3, GETDATE())",
         "aggregation_type": "count",
         "related_tables": ["Resource"],
         "dimensions": ["DateOfJoin"],
@@ -878,20 +781,6 @@ DICTIONARY_ENTRIES: dict[tuple[str, str], list[dict]] = {
             "raw_value": "1",
             "display_value": "Active",
             "description": "Client is active",
-            "sort_order": 2,
-        },
-    ],
-    ("Client", "LeaveClauseConfirmed"): [
-        {
-            "raw_value": "0",
-            "display_value": "Not Confirmed",
-            "description": "Leave clause not confirmed",
-            "sort_order": 1,
-        },
-        {
-            "raw_value": "1",
-            "display_value": "Confirmed",
-            "description": "Leave clause confirmed",
             "sort_order": 2,
         },
     ],

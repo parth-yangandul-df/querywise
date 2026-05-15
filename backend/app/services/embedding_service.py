@@ -119,11 +119,17 @@ async def _embed_with_retry(provider: Any, text: str) -> list[float]:
     raise EmbeddingError()
 
 
-async def embed_table(table: CachedTable) -> list[float]:
-    """Generate an embedding for a table's description."""
+async def embed_table(table: CachedTable, columns: list[CachedColumn] | None = None) -> list[float]:
+    """Generate an embedding for a table including its full column context."""
     text = f"{table.schema_name}.{table.table_name}"
+    if columns:
+        col_parts = [
+            f"{c.column_name}({c.data_type}{' PK' if c.is_primary_key else ''})"
+            for c in columns
+        ]
+        text += ": [" + ", ".join(col_parts) + "]"
     if table.comment:
-        text += f": {table.comment}"
+        text += f" -- {table.comment}"
     return await embed_text(text)
 
 
@@ -245,24 +251,25 @@ async def generate_embeddings_for_connection(
     )
     tables = result.scalars().all()
     for table in tables:
-        table.description_embedding = await embed_table(table)
+        # Load ALL columns for enriched table embedding
+        col_result = await db.execute(
+            select(CachedColumn)
+            .where(CachedColumn.table_id == table.id)
+            .order_by(CachedColumn.ordinal_position)
+        )
+        all_columns = list(col_result.scalars().all())
+        table.description_embedding = await embed_table(table, all_columns)
         count += 1
         if on_progress:
             on_progress()
 
-        # Columns of this table
-        col_result = await db.execute(
-            select(CachedColumn).where(
-                CachedColumn.table_id == table.id,
-                CachedColumn.description_embedding.is_(None),
-            )
-        )
-        columns = col_result.scalars().all()
-        for col in columns:
-            col.description_embedding = await embed_column(col, table.table_name)
-            count += 1
-            if on_progress:
-                on_progress()
+        # Embed only unembedded columns
+        for col in all_columns:
+            if col.description_embedding is None:
+                col.description_embedding = await embed_column(col, table.table_name)
+                count += 1
+                if on_progress:
+                    on_progress()
 
     # Glossary terms
     result = await db.execute(

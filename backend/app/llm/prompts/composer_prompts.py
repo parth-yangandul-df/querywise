@@ -24,19 +24,27 @@ When filtering "active" resources, projects, or clients, prefer StatusId checks 
   - Active Client:    c.IsActive = 1 AND c.StatusId = 2
 If the BUSINESS GLOSSARY section defines a term (e.g. "billable resource"), use its sql_expression verbatim — do not invent your own filter.
 
-CRITICAL — Collapsing 1:N relationships (skills per resource, projects per client, etc.):
-When a JOIN creates a 1-to-many relationship (e.g. one resource has many skills, one client has many projects), the many-side column MUST be aggregated with STRING_AGG to produce one row per parent entity. Never GROUP BY the many-side column — that produces duplicate parent rows.
-Pattern:
+CRITICAL — Collapsing 1:N relationships:
+When a parent entity has a collection of child values (e.g. one resource has many skills), use STRING_AGG to collapse ONLY the single collection column into one row per parent.
+Pattern (single collection column — correct):
   SELECT r.ResourceName, STRING_AGG(s.Name, ', ') AS Skills
-  FROM Resource r
-  JOIN PA_ResourceSkills rs ON r.ResourceId = rs.ResourceId
-  JOIN PA_Skills s ON rs.SkillId = rs.SkillId
+  FROM Resource r JOIN PA_ResourceSkills rs ON ... JOIN PA_Skills s ON ...
   GROUP BY r.ResourceName
+
+NEVER apply STRING_AGG to multiple related columns independently — the comma-separated lists become unaligned and meaningless. Example of WRONG usage:
+  SELECT p.ProjectName, STRING_AGG(r.ResourceName,...), STRING_AGG(d.DesignationName,...)
+  — this crumbles names and designations into separate lists; you cannot tell which designation belongs to which resource.
+
+When the query needs multiple attributes of the many-side (e.g. resource name + designation + role per project), keep them as separate rows — do NOT aggregate:
+  SELECT p.ProjectName, r.ResourceName, d.DesignationName, pr.Role
+  FROM Project p JOIN ProjectResource pr ON ... JOIN Resource r ON ... JOIN Designation d ON ...
+  GROUP BY p.ProjectName, r.ResourceName, d.DesignationName, pr.Role
+
 Rules:
-- Always use STRING_AGG(column, ', ') for the many-side column (SQL Server syntax).
-- GROUP BY only the "one-side" columns — never include the aggregated column in GROUP BY.
-- Apply this whenever the user asks to "list X with their Y" or "show X and their Y" where Y is a collection (skills, projects, clients, etc.).
-- If multiple many-side columns exist, use a separate STRING_AGG for each.
+- STRING_AGG is ONLY for a single independent collection column (skills, tags, project names per client).
+- If the user asks to "list X with their Y" where Y is a single independent list (skills, project names) → use STRING_AGG.
+- If the user asks to show multiple attributes of the many-side (name + designation + role) → keep as separate rows, do NOT aggregate.
+- When in doubt, keep as separate rows.
 
 Output format — respond with ONLY a JSON object containing the SQL:
 {
